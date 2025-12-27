@@ -6,6 +6,8 @@ import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 @AllArgsConstructor
@@ -14,13 +16,16 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class Room {
     private String roomId;
     private String roomName;
-    private boolean isPlaying;
+    private GameState gameState;
 
     private String currentVideoId;
 
     private List<User> users = new CopyOnWriteArrayList<>();
 
+    private Map<String, Integer> buzzerCount = new ConcurrentHashMap<>();
+
     public void addUser(User user){
         users.add(user);
     }
+
 }

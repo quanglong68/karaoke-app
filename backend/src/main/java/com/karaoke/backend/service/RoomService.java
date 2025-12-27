@@ -1,5 +1,6 @@
 package com.karaoke.backend.service;
 
+import com.karaoke.backend.model.GameState;
 import com.karaoke.backend.model.Room;
 import com.karaoke.backend.model.User;
 import org.springframework.stereotype.Service;
@@ -18,7 +19,7 @@ public class RoomService {
         Room room = new Room();
         room.setRoomId(roomId);
         room.setRoomName(roomName);
-        room.setPlaying(false);
+        room.setGameState(GameState.LOBBY);
 
         rooms.put(roomId, room);
 
