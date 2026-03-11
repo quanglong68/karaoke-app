@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,11 +20,15 @@ public class Room {
     private GameState gameState;
 
     private String currentVideoId;
+    private User currentPerformanceUser;
 
     private List<User> users = new CopyOnWriteArrayList<>();
 
     // Thùng phiếu (Lưu ID -> Số lần bấm)
     private Map<String, Integer> buzzerCount = new ConcurrentHashMap<>();
+
+    //thùng phiếu cho giai đoạn vote, true là thích, false là không thích(hát dở)
+    private Map<String, Boolean> votes = new ConcurrentHashMap<>();
 
     // THÊM DÒNG NÀY: Cuốn sổ bạ (Lưu ID -> Tên người dùng)
     private Map<String, String> userNamesMap = new ConcurrentHashMap<>();

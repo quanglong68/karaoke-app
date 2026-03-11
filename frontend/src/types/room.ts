@@ -7,3 +7,7 @@ export interface Room {
   currentVideoId: string | null;
   users: User[];
 }
+export interface JoinRoomResponse {
+  room: Room
+  user: User
+}
