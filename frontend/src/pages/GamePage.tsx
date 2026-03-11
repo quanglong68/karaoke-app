@@ -5,6 +5,7 @@ import VideoPlayer from "../components/VideoPlayer";
 import type { SocketMessage } from "../types/socket";
 import type { GameState, MusicInfo } from "../types/game";
 import { websocketService } from "../services/websocketService";
+import type { User } from "../types/user";
 
 export default function GamePage() {
     const { roomId } = useParams();
@@ -14,7 +15,7 @@ export default function GamePage() {
     const userId = localStorage.getItem("userId") || "";
     const [gameState, setGameState] = useState<GameState>("LOBBY");
     const [clickCount, setClickCount] = useState(0);
-    const [winner, setWinner] = useState<string | null>(null);
+    const [winnerUser, setWinnerUser] = useState<User | null>(null);
 
     const [musicInfo, setMusicInfo] = useState<MusicInfo>({
         videoId: "",
@@ -50,9 +51,11 @@ export default function GamePage() {
                     console.log("Người chiến thắng là:", message.content);
                     setGameState("PERFORMANCE");
                     if (typeof message.content !== "string" && "userName" in message.content) {
-                        setWinner(message.content.userName);
+                        setWinnerUser(message.content);
                     }
                     setMusicInfo(prev => ({ ...prev, isPlaying: true }));
+                } else if (message.type === "VOTE") {
+                    setGameState("VOTE");
                 }
 
             });
@@ -76,13 +79,22 @@ export default function GamePage() {
 
         setClickCount(prev => prev + 1);
         websocketService.sendMessage(roomId, {
-            type: "VOTE",
+            type: "BATTLE",
             content: "",
             sender: userId,
             roomId: roomId!
         });
     };
+    const handleVoteClick = (isLike: boolean) => {
+        if (!roomId) return;
 
+        websocketService.sendMessage(roomId, {
+            type: "VOTE",
+            content: isLike.toString(),
+            sender: userId,
+            roomId: roomId!
+        });
+    };
     const sendPauseCommand = () => {
         websocketService.sendMessage(roomId!, {
             type: "PAUSE",
@@ -168,10 +180,75 @@ export default function GamePage() {
 
                         {/* Hiện tên người thắng. Nếu là chính mình thì đổi thành chữ "BẠN" */}
                         <h1 style={{ fontSize: '50px', margin: '10px 0', color: '#00ffcc' }}>
-                            {winner === userName ? "BẠN!" : winner}
+                            {winnerUser && winnerUser.userName === userName ? "BẠN!" : winnerUser?.userName}
                         </h1>
 
                         <p style={{ fontSize: '20px', animation: 'blink 1s infinite' }}>Đang biểu diễn...</p>
+                    </div>
+                )}
+                {/* Lớp phủ cho giai đoạn VOTE (Bình chọn) */}
+                {gameState === "VOTE" && (
+                    <div className="vote-container" style={{
+                        position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                        backgroundColor: 'rgba(0,0,0,0.85)', // Nền tối hơn chút để tập trung vào nút bấm
+                        zIndex: 40,
+                        display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+                        color: 'white', textShadow: '1px 1px 5px #000'
+                    }}>
+                        {/* KIỂM TRA PHÂN QUYỀN: Người hát vs Khán giả */}
+                        {userId === winnerUser?.userId ? (
+
+                            /* 1. Giao diện dành cho người vừa hát xong */
+                            <div style={{ textAlign: 'center' }}>
+                                <h2 style={{ color: '#FFD700', fontSize: '32px', marginBottom: '10px' }}>
+                                    🎤 Phần biểu diễn đã kết thúc!
+                                </h2>
+                                <p style={{ fontSize: '22px', color: '#aaa', animation: 'blink 1.5s infinite' }}>
+                                    Đang chờ khán giả bình chọn... ⏳
+                                </p>
+                            </div>
+
+                        ) : (
+
+                            /* 2. Giao diện dành cho Khán giả "cầm cân nảy mực" */
+                            <div style={{ textAlign: 'center' }}>
+                                <h2 style={{ color: '#00ffcc', fontSize: '28px', marginBottom: '40px' }}>
+                                    Bạn thấy <span style={{ color: '#FFD700' }}>{winnerUser?.userName}</span> hát thế nào?
+                                </h2>
+
+                                <div style={{ display: 'flex', gap: '30px', justifyContent: 'center' }}>
+                                    {/* Nút Khen */}
+                                    <button
+                                        onClick={() => handleVoteClick(true)}
+                                        style={{
+                                            padding: '15px 40px', fontSize: '24px', fontWeight: 'bold', cursor: 'pointer',
+                                            backgroundColor: '#2ed573', color: 'white', border: '3px solid white',
+                                            borderRadius: '50px', boxShadow: '0 6px 20px rgba(46, 213, 115, 0.6)',
+                                            transition: 'transform 0.1s'
+                                        }}
+                                        onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
+                                        onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                                    >
+                                        👍 HAY QUÁ!
+                                    </button>
+
+                                    {/* Nút Chê */}
+                                    <button
+                                        onClick={() => handleVoteClick(false)}
+                                        style={{
+                                            padding: '15px 40px', fontSize: '24px', fontWeight: 'bold', cursor: 'pointer',
+                                            backgroundColor: '#ff4757', color: 'white', border: '3px solid white',
+                                            borderRadius: '50px', boxShadow: '0 6px 20px rgba(255, 71, 87, 0.6)',
+                                            transition: 'transform 0.1s'
+                                        }}
+                                        onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
+                                        onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                                    >
+                                        👎 Ò Ó O...
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

@@ -21,8 +21,11 @@ public class GameService {
             case PLAY_SEGMENT:
                  startGame(roomId, "P-AoULl-dkU");
                  break;
-            case VOTE:
+            case BATTLE:
                 handleUserClick(roomId, message.getSender());
+                break;
+            case VOTE:
+                handleUserVote(roomId, message.getSender(), message.getContent().toString());
 
         }
     }
@@ -65,12 +68,64 @@ public class GameService {
         for(User u : room.getUsers()){
             if(u.getUserId().equalsIgnoreCase(highestScoreUserId)){
                 winnerName = u.getUserName();
+                room.setCurrentPerformanceUser(u);
                 break;
             }
         }
         room.setGameState(GameState.PERFORMANCE);
         broadcast(roomId, new SocketMessage(GameState.PERFORMANCE,room.getUserById(highestScoreUserId),"server",roomId));
         buzzerCount.clear();
+        scheduler.schedule(() -> startVotePhase(roomId), 15, TimeUnit.SECONDS );
+    }
+    public void startVotePhase(String roomId){
+        Room room = roomService.getRoom(roomId);
+        room.setGameState(GameState.VOTE);
+        broadcast(roomId, new SocketMessage(GameState.VOTE,"","server",roomId));
+        scheduler.schedule(() -> endVotePhase(roomId), 5, TimeUnit.SECONDS );
+    }
+    public void endVotePhase(String roomId){
+        Room room = roomService.getRoom(roomId);
+        if (room == null) return;
+        Map<String, Boolean> votes = room.getVotes();
+        System.out.println("LOG SERVER - HẾT 5 GIÂY! Mở thùng phiếu (giai đoạn vote) ra kiểm tra: " + votes);
+       //logic ở đây sẽ là nếu đếm tổng số lượng user trong phòng nếu số lượng vote hay >= trung bình số lượng người chơi thì người chơi vừa hát sẽ đươc cộng điểm
+        int numberOfUsers = room.getUsers().size() - 1 ;
+        User performanceUser = room.getCurrentPerformanceUser();
+        if(numberOfUsers <= 0){
+            performanceUser.setScore(performanceUser.getScore() + 1);
+            broadcast(roomId, new SocketMessage(GameState.LOBBY,"Chúc mừng "+ performanceUser.getUserName() + " đã dành được điểm ở bài hát này","server",roomId));
+        }else{
+            int numberFalseVotes = 0;
+            for (Map.Entry<String, Boolean> entry : votes.entrySet()) {
+                if(!entry.getValue()){
+                    numberFalseVotes++;
+                }
+            }
+
+            if (performanceUser != null) {
+                if((numberOfUsers - numberFalseVotes) * 1.0 / numberOfUsers >= 0.5){
+                    performanceUser.setScore(performanceUser.getScore() + 1);
+                    broadcast(roomId, new SocketMessage(GameState.LOBBY,"Chúc mừng "+ performanceUser.getUserName() + " đã dành được điểm ở bài hát này","server",roomId));
+                }else {
+                    broadcast(roomId, new SocketMessage(GameState.LOBBY,"Rất đáng tiếc, "+ performanceUser.getUserName() + " chưa dành được điểm ở bài hát này","server",roomId));
+                }}
+
+            votes.clear();
+            scheduler.schedule(() -> startGame(roomId, "gPsrPzVE_fY"), 5, TimeUnit.SECONDS );
+            room.setCurrentVideoId(null);
+        }
+
+
+    }
+    public void handleUserVote(String roomId, String userId, String content){
+        Room room = roomService.getRoom(roomId);
+        if(userId.equalsIgnoreCase(room.getCurrentPerformanceUser().getUserId())){
+            return;
+        }
+        if(room.getGameState() == GameState.VOTE){
+            Map<String, Boolean> votes = room.getVotes();
+            votes.put(userId, Boolean.parseBoolean(content));
+        }
     }
     public void handleUserClick(String roomId, String userId){
         Room room = roomService.getRoom(roomId);
