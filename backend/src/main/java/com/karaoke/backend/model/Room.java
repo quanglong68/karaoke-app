@@ -22,10 +22,20 @@ public class Room {
 
     private List<User> users = new CopyOnWriteArrayList<>();
 
+    // Thùng phiếu (Lưu ID -> Số lần bấm)
     private Map<String, Integer> buzzerCount = new ConcurrentHashMap<>();
+
+    // THÊM DÒNG NÀY: Cuốn sổ bạ (Lưu ID -> Tên người dùng)
+    private Map<String, String> userNamesMap = new ConcurrentHashMap<>();
 
     public void addUser(User user){
         users.add(user);
     }
 
+    public User getUserById(String userId) {
+        return users.stream()
+                .filter(u -> u.getUserId().equals(userId))
+                .findFirst()
+                .orElse(null);
+    }
 }

@@ -1,5 +1,5 @@
 package com.karaoke.backend.model;
 
 public enum GameState {
-LOBBY, PLAY_MUSIC, BATTLE, PERFORMANCE, VOTE
+JOIN,LOBBY, PLAY_SEGMENT, BATTLE, PERFORMANCE, VOTE, CHAT, PAUSE
 }

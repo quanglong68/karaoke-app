@@ -1,11 +1,7 @@
 import SockJS from "sockjs-client";
 import Stomp from "stompjs";
-export interface SocketMessage {
-    type: string;
-    content: string;
-    sender: string;
-    roomId: string;
-}
+import type { SocketMessage } from "../types/socket";
+
 
 interface StompFrame {
     body: string;
@@ -38,7 +34,10 @@ export const websocketService = {
 
     sendMessage: (roomId: string, message: SocketMessage) => {
         if (stompClient && stompClient.connected) {
-            stompClient.send(`/app/room/${roomId}/chat`, {}, JSON.stringify(message));
+            const destination = message.type === "CHAT" ? `/app/room/${roomId}/chat`
+            : `/app/room/${roomId}`;
+            stompClient.send(destination, {}, JSON.stringify(message));
+            console.log(`Đang gửi lệnh [${message.type}] đến: ${destination}`);
         } else {
             console.error('Chưa kết nối WebSocket, không thể gửi tin!');
         }

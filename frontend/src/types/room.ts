@@ -1,8 +1,5 @@
-export interface User {
-  userId: string;
-  userName: string;
-  score: number;
-}
+import type { User } from "./user";
+
 export interface Room {
   roomId: string;
   roomName: string;

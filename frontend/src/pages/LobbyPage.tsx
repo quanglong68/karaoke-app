@@ -17,9 +17,11 @@ export default function LobbyPage() {
         }
         localStorage.setItem("userName", userName);
         try {
-            const room = await roomService.joinRoom(joinId, userName);
-            alert("Joined room: " + room.roomId);
-            navigate(`/room/${room.roomId}`);
+            const data = await roomService.joinRoom(joinId, userName);
+            localStorage.setItem("userId", data.user.userId);
+
+            alert("Joined room: " + data.room.roomId);
+            navigate(`/room/${data.room.roomId}`);
         } catch (error) {
             console.error("Failed to join room", error);
             alert("Be error joining room");
@@ -27,15 +29,17 @@ export default function LobbyPage() {
     }
 
     const handleCreate = async () => {
-        if (!roomName) {
-            alert("Please enter your name");
+        if (!userName || !roomName) {
+            alert("Please enter your name and room name");
             return;
         }
         localStorage.setItem("roomName", roomName);
+        localStorage.setItem("userName", userName);
         try {
-            const room = await roomService.createRoom(roomName);
-            alert("Tạo phòng thành công. ID Phòng: " + room.roomId);
-            navigate(`/room/${room.roomId}`);
+            const data = await roomService.createRoom(roomName, userName);
+            localStorage.setItem("userId", data.user.userId);
+            alert("Tạo phòng thành công. ID Phòng: " + data.room.roomId);
+            navigate(`/room/${data.room.roomId}`);
         } catch (error) {
             console.error("Failed to create room", error);
             alert("Be error creating room");
@@ -47,12 +51,19 @@ export default function LobbyPage() {
             <div className="control-panel">
                 <input
                     type="text"
+                    placeholder="Nhập tên của bạn"
+                    value={userName}
+                    onChange={(e) => setUserName(e.target.value)}
+                />
+                <input
+                    type="text"
                     placeholder="Hãy đặt tên phòng"
                     value={roomName}
                     onChange={(e) => setRoomName(e.target.value)}
                 />
                 <button onClick={handleCreate}>Tạo phòng ngay</button>
             </div>
+            <div style={{ margin: "20px 0", fontWeight: "bold" }}>Hoặc </div>
             <div className="control-panel">
                 <input
                     type="text"

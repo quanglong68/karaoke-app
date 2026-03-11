@@ -4,12 +4,12 @@ import YouTube, { type YouTubeProps, type YouTubePlayer } from 'react-youtube';
 
 interface VideoPlayerProps {
     videoId: string;
-    start: number;
-    end: number;
+    startSeconds: number;
+    endSeconds: number;
     isPlaying: boolean;
 }
 
-export default function VideoPlayer({ videoId, start, end, isPlaying }: VideoPlayerProps) {
+export default function VideoPlayer({ videoId, startSeconds, endSeconds, isPlaying }: VideoPlayerProps) {
     const playerRef = useRef<YouTubePlayer | null>(null);
 
     // Cấu hình Player
@@ -17,31 +17,51 @@ export default function VideoPlayer({ videoId, start, end, isPlaying }: VideoPla
         height: '300',
         width: '500',
         playerVars: {
-            autoplay: 1,
+            autoplay: 0,
             controls: 0,
             disablekb: 1,
-            start: start, // Thông số start ban đầu
-            end: end,
+            start: startSeconds, // Thông số start ban đầu
+            end: endSeconds,
         },
     };
 
     // Khi player tải xong, ép nó nhảy đến đúng giây start
     const onPlayerReady: YouTubeProps['onReady'] = (event) => {
         playerRef.current = event.target;
-        event.target.seekTo(start, true);
+        event.target.seekTo(startSeconds, true);
         event.target.playVideo();
     };
 
-    // Khi server gửi lệnh mới (đổi bài, đổi giờ), ép player nhảy theo
+    // NHIỆM VỤ 1: CHUYỂN BÀI HOẶC ĐỔI ĐOẠN NHẠC
+    // Chỉ chạy khi Server gửi bài hát mới hoặc mốc thời gian mới (videoId, startSeconds thay đổi)
     useEffect(() => {
-        if (playerRef.current && isPlaying) {
-            playerRef.current.seekTo(start, true);
-            playerRef.current.playVideo();
+        if (playerRef.current && videoId) {
+            // Có bài mới là bắt buộc phải tua đến đúng điểm xuất phát
+            playerRef.current.seekTo(startSeconds, true);
         }
-    }, [videoId, start, isPlaying]);
+    }, [videoId, startSeconds]); // <-- Chỉ lắng nghe thời gian và id bài hát
+
+
+    // NHIỆM VỤ 2: QUẢN LÝ CHẠY / DỪNG (BATTLE / PERFORMANCE)
+    // Chỉ chạy khi Server ra lệnh dừng đập nút hoặc cho phép hát tiếp (isPlaying thay đổi)
+    useEffect(() => {
+        if (!playerRef.current) return;
+
+        try {
+            if (isPlaying) {
+                // Chỉ ra lệnh hát tiếp từ vị trí hiện tại. KHÔNG TUA nữa!
+                playerRef.current.playVideo();
+            } else {
+                // Lệnh dừng nhạc để đập nút
+                playerRef.current.pauseVideo();
+            }
+        } catch (error) {
+            console.warn("YouTube Player đang bận, bỏ qua nhịp này:", error);
+        }
+    }, [isPlaying]); // <-- Chỉ lắng nghe trạng thái Play/Pause
 
     // Nếu isPlaying = false thì hiện màn hình chờ
-    if (!isPlaying) {
+    if (!videoId) {
         return (
             <div style={{
                 width: '500px', height: '300px', background: '#000',

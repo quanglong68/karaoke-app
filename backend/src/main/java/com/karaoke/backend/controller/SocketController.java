@@ -1,5 +1,6 @@
 package com.karaoke.backend.controller;
 
+import com.karaoke.backend.model.GameState;
 import com.karaoke.backend.model.SocketMessage;
 import com.karaoke.backend.service.GameService;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
@@ -17,14 +18,14 @@ public class SocketController {
     @MessageMapping("/room/{roomId}/chat")
     @SendTo("/topic/room/{roomId}")
     public SocketMessage handleChat(@DestinationVariable String roomId, @Payload SocketMessage message) {
-        //video id đang sài code cứng
-        if(message.getType().equalsIgnoreCase("START")) {
-            gameService.startGame(roomId, "P-AoULl-dkU");
-        }
-        if(message.getType().equalsIgnoreCase("CLICK")) {
-            gameService.handleUserClick(roomId, message.getSender());
-        }
         System.out.println("Nhận tin nhắn từ phòng " + roomId + ": " + message.getContent());
         return message;
     }
+
+    @MessageMapping("/room/{roomId}")
+    public void handleGame(@DestinationVariable String roomId, @Payload SocketMessage message) {
+        System.out.println("LOG SERVER - Nhận lệnh type: " + message.getType());
+        gameService.handleGameMessage(roomId, message);
+    }
+
 }
