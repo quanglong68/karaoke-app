@@ -6,10 +6,12 @@ export type GameState =
     | "PERFORMANCE" 
     | "VOTE" 
     | "CHAT" 
-    | "PAUSE";
+    | "PAUSE"
+    | "WINNER_SHOW"
+    | "COUNTDOWN";
 export interface MusicInfo {
-    videoId: string;
+    videoUrl: string;
     startSeconds: number;
-    endSeconds: number;
+    serverStartTime: number;
     isPlaying: boolean;
 }

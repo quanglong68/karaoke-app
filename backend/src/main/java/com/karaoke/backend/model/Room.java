@@ -4,10 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -24,6 +21,9 @@ public class Room {
 
     private List<User> users = new CopyOnWriteArrayList<>();
 
+    private Song currentSong;
+
+    private Set<String> playedSongIds = ConcurrentHashMap.newKeySet();
     // Thùng phiếu (Lưu ID -> Số lần bấm)
     private Map<String, Integer> buzzerCount = new ConcurrentHashMap<>();
 

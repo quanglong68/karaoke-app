@@ -10,10 +10,9 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 public class MusicInfo {
-    private String videoId;
-    private int startSeconds ;
-    private int endSeconds;
-
+    private String videoUrl;
+    private double startSeconds;
+    private long serverStartTime;
     @JsonProperty("isPlaying")
     private boolean isPlaying;
 
