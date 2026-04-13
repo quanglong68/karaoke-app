@@ -1,72 +1,51 @@
 import React, { useEffect, useRef } from 'react';
-// Import kiểu này để tránh lỗi TypeScript strict mode
-import YouTube, { type YouTubeProps, type YouTubePlayer } from 'react-youtube';
 
 interface VideoPlayerProps {
-    videoId: string;
+    videoUrl: string;
     startSeconds: number;
-    endSeconds: number;
     isPlaying: boolean;
+    serverStartTime: number;
 }
 
-export default function VideoPlayer({ videoId, startSeconds, endSeconds, isPlaying }: VideoPlayerProps) {
-    const playerRef = useRef<YouTubePlayer | null>(null);
+export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverStartTime }: VideoPlayerProps) {
+    const videoRef = useRef<HTMLVideoElement>(null);
 
-    // Cấu hình Player
-    const opts: YouTubeProps['opts'] = {
-        height: '300',
-        width: '500',
-        playerVars: {
-            autoplay: 0,
-            controls: 0,
-            disablekb: 1,
-            start: startSeconds, // Thông số start ban đầu
-            end: endSeconds,
-        },
-    };
-
-    // Khi player tải xong, ép nó nhảy đến đúng giây start
-    const onPlayerReady: YouTubeProps['onReady'] = (event) => {
-        playerRef.current = event.target;
-        event.target.seekTo(startSeconds, true);
-        event.target.playVideo();
-    };
-
-    // NHIỆM VỤ 1: CHUYỂN BÀI HOẶC ĐỔI ĐOẠN NHẠC
-    // Chỉ chạy khi Server gửi bài hát mới hoặc mốc thời gian mới (videoId, startSeconds thay đổi)
     useEffect(() => {
-        if (playerRef.current && videoId) {
-            // Có bài mới là bắt buộc phải tua đến đúng điểm xuất phát
-            playerRef.current.seekTo(startSeconds, true);
+        const video = videoRef.current;
+        if (!video) return;
+
+        if (isPlaying && videoUrl) {
+            // 1. Tính toán thời gian đáng lẽ video phải chạy tới đâu rồi
+            const now = Date.now();
+            const expectedVideoTime = startSeconds + ((now - serverStartTime) / 1000);
+
+            // Tua video đến đúng vị trí đó
+            video.currentTime = expectedVideoTime;
+            video.play().catch(e => console.error("Trình duyệt chặn autoplay:", e));
+
+            // 2. CẢNH SÁT TUẦN TRA (Heartbeat Sync): Chống lag và chống ẩn tab
+            const syncInterval = setInterval(() => {
+                const currentExpectedTime = startSeconds + ((Date.now() - serverStartTime) / 1000);
+
+                // Nếu video bị chậm hoặc nhanh hơn Server quá 0.5 giây -> Ép tua lại cho chuẩn
+                if (Math.abs(video.currentTime - currentExpectedTime) > 0.5) {
+                    console.log(`Đồng bộ lại video! Lệch: ${video.currentTime - currentExpectedTime}s`);
+                    video.currentTime = currentExpectedTime;
+                }
+            }, 1000); // Check mỗi 1 giây
+
+            return () => clearInterval(syncInterval);
+        } else {
+            video.pause();
         }
-    }, [videoId, startSeconds]); // <-- Chỉ lắng nghe thời gian và id bài hát
+    }, [isPlaying, serverStartTime, startSeconds, videoUrl]);
 
-
-    // NHIỆM VỤ 2: QUẢN LÝ CHẠY / DỪNG (BATTLE / PERFORMANCE)
-    // Chỉ chạy khi Server ra lệnh dừng đập nút hoặc cho phép hát tiếp (isPlaying thay đổi)
-    useEffect(() => {
-        if (!playerRef.current) return;
-
-        try {
-            if (isPlaying) {
-                // Chỉ ra lệnh hát tiếp từ vị trí hiện tại. KHÔNG TUA nữa!
-                playerRef.current.playVideo();
-            } else {
-                // Lệnh dừng nhạc để đập nút
-                playerRef.current.pauseVideo();
-            }
-        } catch (error) {
-            console.warn("YouTube Player đang bận, bỏ qua nhịp này:", error);
-        }
-    }, [isPlaying]); // <-- Chỉ lắng nghe trạng thái Play/Pause
-
-    // Nếu isPlaying = false thì hiện màn hình chờ
-    if (!videoId) {
+    if (!videoUrl) {
         return (
             <div style={{
-                width: '500px', height: '300px', background: '#000',
+                width: '100%', height: '100%', background: '#000',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'white', border: '1px solid #333'
+                color: 'white', border: '1px solid #333', borderRadius: '8px'
             }}>
                 <h3>Đang chờ bài hát...</h3>
             </div>
@@ -74,13 +53,16 @@ export default function VideoPlayer({ videoId, startSeconds, endSeconds, isPlayi
     }
 
     return (
-        <div style={{ position: 'relative', width: '500px', height: '300px', background: '#000' }}>
-            {/* Lớp phủ chặn click chuột */}
-            <div style={{
-                position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10
-            }}></div>
-
-            <YouTube videoId={videoId} opts={opts} onReady={onPlayerReady} />
+        <div style={{ position: 'relative', width: '100%', height: '100%', background: '#000', borderRadius: '8px', overflow: 'hidden' }}>
+            <video
+                ref={videoRef}
+                src={videoUrl}
+                width="100%"
+                height="100%"
+                style={{ objectFit: 'cover' }}
+                autoPlay={false}
+                controls={false} // Chặn người dùng tự ý tua video
+            />
         </div>
     );
 }

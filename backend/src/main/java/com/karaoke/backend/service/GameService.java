@@ -4,13 +4,20 @@ import com.karaoke.backend.model.*;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 @Service
 public class GameService {
+    private final List<Song> songBank = List.of(new Song("S01", "Ex Hate Me(Part 2)", "http://localhost:8080/videos/song1.mp4", 11.24, 31.23),
+            new Song("S02", "Không buông", "http://localhost:8080/videos/song2.mp4", 11, 39),
+            new Song("S03", "Trú mưa nơi cầu vồng", "http://localhost:8080/videos/song3.mp4", 7.21, 25.28),
+            new Song("S04", "Trú mưa nơi cầu vồng 2", "http://localhost:8080/videos/song4.mp4", 8.2, 25.24));
     private final ScheduledExecutorService scheduler =
             Executors.newScheduledThreadPool(10);
     private final RoomService roomService;
@@ -19,7 +26,7 @@ public class GameService {
     public void handleGameMessage(String roomId, SocketMessage message) {
         switch (message.getType()) {
             case PLAY_SEGMENT:
-                 startGame(roomId, "P-AoULl-dkU");
+                 startGame(roomId);
                  break;
             case BATTLE:
                 handleUserClick(roomId, message.getSender());
@@ -33,12 +40,15 @@ public class GameService {
         this.roomService = roomService;
         this.messagingTemplate = messagingTemplate;
     }
-    public void startGame(String roomId, String videoId) {
+    public void startGame(String roomId) {
         Room room = roomService.getRoom(roomId);
+        Song song = pickRandomSong(room);
+        room.setCurrentSong(song);
         room.setGameState(GameState.PLAY_SEGMENT);
-        broadcast(roomId, new SocketMessage(GameState.PLAY_SEGMENT, new MusicInfo(videoId,0
-                ,10,true),"server",roomId));
-        scheduler.schedule(() -> startBuzzerPhase(roomId), 10, TimeUnit.SECONDS );
+        broadcast(roomId, new SocketMessage(GameState.PLAY_SEGMENT, new MusicInfo(song.getVideoUrl(), 0
+                ,System.currentTimeMillis(),true),"server",roomId));
+        long listenDelayMillis = (long) (song.getListenDuration() * 1000);
+        scheduler.schedule(() -> startBuzzerPhase(roomId), listenDelayMillis, TimeUnit.MILLISECONDS );
     }
     public void startBuzzerPhase(String roomId){
         Room room = roomService.getRoom(roomId);
@@ -72,10 +82,30 @@ public class GameService {
                 break;
             }
         }
-        room.setGameState(GameState.PERFORMANCE);
-        broadcast(roomId, new SocketMessage(GameState.PERFORMANCE,room.getUserById(highestScoreUserId),"server",roomId));
+        room.setGameState(GameState.WINNER_SHOW);
+        broadcast(roomId, new SocketMessage(GameState.WINNER_SHOW, room.getUserById(highestScoreUserId),"server",roomId));
         buzzerCount.clear();
-        scheduler.schedule(() -> startVotePhase(roomId), 15, TimeUnit.SECONDS );
+        scheduler.schedule(() -> startCountdownPhase(roomId), 3, TimeUnit.SECONDS );
+//        room.setGameState(GameState.PERFORMANCE);
+//        broadcast(roomId, new SocketMessage(GameState.PERFORMANCE,room.getUserById(highestScoreUserId),"server",roomId));
+//        buzzerCount.clear();
+//        scheduler.schedule(() -> startVotePhase(roomId), 15, TimeUnit.SECONDS );
+    }
+    public void startCountdownPhase(String roomId) {
+        Room room = roomService.getRoom(roomId);
+        room.setGameState(GameState.COUNTDOWN);
+        broadcast(roomId, new SocketMessage(GameState.COUNTDOWN,"","server",roomId));
+        scheduler.schedule(() -> startPerformancePhase(roomId), 3, TimeUnit.SECONDS );
+    }
+    public void startPerformancePhase(String roomId) {
+        Room room = roomService.getRoom(roomId);
+        room.setGameState(GameState.PERFORMANCE);
+        Song currentSong = room.getCurrentSong();
+        broadcast(roomId, new SocketMessage(GameState.PERFORMANCE, new MusicInfo(currentSong.getVideoUrl(), currentSong.getListenDuration()
+                ,System.currentTimeMillis(),true),"server",roomId));
+        double performanceTime = room.getCurrentSong().getTotalDuration() - room.getCurrentSong().getListenDuration();
+        long performanceDelayMillis = (long) (performanceTime * 1000);
+        scheduler.schedule(() -> startVotePhase(roomId), performanceDelayMillis, TimeUnit.MILLISECONDS );
     }
     public void startVotePhase(String roomId){
         Room room = roomService.getRoom(roomId);
@@ -111,7 +141,7 @@ public class GameService {
                 }}
 
             votes.clear();
-            scheduler.schedule(() -> startGame(roomId, "gPsrPzVE_fY"), 5, TimeUnit.SECONDS );
+            scheduler.schedule(() -> startGame(roomId), 5, TimeUnit.SECONDS );
             room.setCurrentVideoId(null);
         }
 
@@ -136,5 +166,18 @@ public class GameService {
     }
     private void broadcast(String roomId, SocketMessage message){
         messagingTemplate.convertAndSend("/topic/room/"+roomId, message);
+    }
+
+    private Song pickRandomSong(Room room){
+        List<Song> availablesSongs = new ArrayList<>();
+        songBank.stream().filter(song -> !room.getPlayedSongIds().contains(song.getId()) ).forEach(availablesSongs::add);
+        if (availablesSongs.isEmpty()) {
+            room.getPlayedSongIds().clear();
+            availablesSongs.addAll(songBank);
+        }
+        Random random = new Random();
+        Song pickedSong = availablesSongs.get(random.nextInt(availablesSongs.size()));
+        room.getPlayedSongIds().add(pickedSong.getId());
+        return pickedSong;
     }
 }
