@@ -19,6 +19,8 @@ public class Room {
     private String currentVideoId;
     private User currentPerformanceUser;
 
+    private int currentRound = 0;
+
     private List<User> users = new CopyOnWriteArrayList<>();
 
     private Song currentSong;
