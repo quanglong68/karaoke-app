@@ -24,7 +24,7 @@ public class RoomService {
 
         rooms.put(roomId, room);
 
-        User user = new User(UUID.randomUUID().toString().substring(0, 8), userName, 0);
+        User user = new User(UUID.randomUUID().toString().substring(0, 8), userName, 0, true, true);
         room.addUser(user);
         map.put("room", room);
         map.put("user", user);
@@ -38,7 +38,7 @@ public class RoomService {
             System.out.println("Sai id phòng hoặc phòng không tồn tại ! ");
             return null;
         }
-        User user = new User(UUID.randomUUID().toString().substring(0, 8), userName, 0);
+        User user = new User(UUID.randomUUID().toString().substring(0, 8), userName, 0, false, false);
         room.addUser(user);
         return user;
     }

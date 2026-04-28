@@ -4,10 +4,7 @@ import com.karaoke.backend.model.*;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -33,15 +30,49 @@ public class GameService {
                 break;
             case VOTE:
                 handleUserVote(roomId, message.getSender(), message.getContent().toString());
-
+                break;
+            case JOIN:
+                roomService.getRoom(roomId);
+                broadcast(roomId, new SocketMessage(GameState.JOIN, roomService.getRoom(roomId).getUsers(), "server", roomId));
+                lobbyPhase(roomId);
+                break;
+            case KICK_PLAYER:
+                handleUserKick(roomId, message.getSender(), message.getContent().toString());
+                break;
+            case TOGGLE_READY:
+                handleToggleReady(roomId, message.getSender());
+                break;
         }
     }
     public GameService(RoomService roomService, SimpMessagingTemplate messagingTemplate) {
         this.roomService = roomService;
         this.messagingTemplate = messagingTemplate;
     }
+    public void handleToggleReady(String roomId, String userId) {
+        Room room = roomService.getRoom(roomId);
+        User u = room.getUserById(userId);
+        if(u != null) {
+            u.setReady(!u.isReady());
+            lobbyPhase(roomId);
+        }
+    }
+    public void lobbyPhase(String roomId) {
+        Room room = roomService.getRoom(roomId);
+        room.setGameState(GameState.LOBBY);
+        broadcast(roomId, new SocketMessage(GameState.LOBBY,room.getUsers(),"server",roomId));
+    }
+    public void handleUserKick(String roomId, String hostId, String kickedPlayer) {
+        Room room = roomService.getRoom(roomId);
+        if(room.getUserById(hostId).isHost() == false) {
+            return;
+        }
+        room.getUsers().removeIf(user -> user.getUserId().equals(kickedPlayer));
+        broadcast(roomId, new SocketMessage(GameState.KICK_PLAYER, kickedPlayer,hostId,roomId));
+        lobbyPhase(roomId);
+    }
     public void startGame(String roomId) {
         Room room = roomService.getRoom(roomId);
+        room.setCurrentRound(room.getCurrentRound() + 1);
         Song song = pickRandomSong(room);
         room.setCurrentSong(song);
         room.setGameState(GameState.PLAY_SEGMENT);
@@ -113,39 +144,71 @@ public class GameService {
         broadcast(roomId, new SocketMessage(GameState.VOTE,"","server",roomId));
         scheduler.schedule(() -> endVotePhase(roomId), 5, TimeUnit.SECONDS );
     }
-    public void endVotePhase(String roomId){
+    public void endVotePhase(String roomId) {
         Room room = roomService.getRoom(roomId);
         if (room == null) return;
         Map<String, Boolean> votes = room.getVotes();
-        System.out.println("LOG SERVER - HẾT 5 GIÂY! Mở thùng phiếu (giai đoạn vote) ra kiểm tra: " + votes);
-       //logic ở đây sẽ là nếu đếm tổng số lượng user trong phòng nếu số lượng vote hay >= trung bình số lượng người chơi thì người chơi vừa hát sẽ đươc cộng điểm
+
         int numberOfUsers = room.getUsers().size() - 1 ;
         User performanceUser = room.getCurrentPerformanceUser();
-        if(numberOfUsers <= 0){
-            performanceUser.setScore(performanceUser.getScore() + 1);
-            broadcast(roomId, new SocketMessage(GameState.LOBBY,"Chúc mừng "+ performanceUser.getUserName() + " đã dành được điểm ở bài hát này","server",roomId));
-        }else{
+        if (performanceUser == null) return;
+
+        // 1. Xác định kết quả
+        boolean isSuccess = false;
+
+        if (numberOfUsers <= 0) {
+            isSuccess = true; // Một mình tự hát tự nghe -> Cho qua luôn
+        } else {
             int numberFalseVotes = 0;
             for (Map.Entry<String, Boolean> entry : votes.entrySet()) {
-                if(!entry.getValue()){
+                if (!entry.getValue()) {
                     numberFalseVotes++;
                 }
             }
-
-            if (performanceUser != null) {
-                if((numberOfUsers - numberFalseVotes) * 1.0 / numberOfUsers >= 0.5){
-                    performanceUser.setScore(performanceUser.getScore() + 1);
-                    broadcast(roomId, new SocketMessage(GameState.LOBBY,"Chúc mừng "+ performanceUser.getUserName() + " đã dành được điểm ở bài hát này","server",roomId));
-                }else {
-                    broadcast(roomId, new SocketMessage(GameState.LOBBY,"Rất đáng tiếc, "+ performanceUser.getUserName() + " chưa dành được điểm ở bài hát này","server",roomId));
-                }}
-
-            votes.clear();
-            scheduler.schedule(() -> startGame(roomId), 5, TimeUnit.SECONDS );
-            room.setCurrentVideoId(null);
+            if ((numberOfUsers - numberFalseVotes) * 1.0 / numberOfUsers >= 0.5) {
+                isSuccess = true;
+            }
         }
 
+        // 2. Cộng điểm nếu thành công
+        if (isSuccess) {
+            performanceUser.setScore(performanceUser.getScore() + 1);
+        }
 
+        // 3. Đóng gói Dữ liệu & Gửi xuống Frontend
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("user", performanceUser);
+        payload.put("isSuccess", isSuccess);
+
+        room.setGameState(GameState.SCORE_SHOW);
+        broadcast(roomId, new SocketMessage(GameState.SCORE_SHOW, payload, "server", roomId));
+
+        // 4. Dọn dẹp và Lên lịch bài mới (Chạy cho MỌI trường hợp)
+        votes.clear();
+        if (room.getCurrentRound() < 3) {
+            scheduler.schedule(() -> startGame(roomId), 3, TimeUnit.SECONDS );
+        }else{
+            scheduler.schedule(() -> startEndGamePhase(roomId), 3, TimeUnit.SECONDS );
+        }
+
+        room.setCurrentVideoId(null);
+    }
+    public  void startEndGamePhase(String roomId){
+        Room room = roomService.getRoom(roomId);
+        room.setGameState(GameState.END_GAME);
+        broadcast(roomId, new SocketMessage(GameState.END_GAME,"","server",roomId));
+        scheduler.schedule(() -> resetGame(roomId), 5, TimeUnit.SECONDS );
+    }
+    public void resetGame(String roomId){
+        Room room = roomService.getRoom(roomId);
+        room.setCurrentRound(0);
+        room.getPlayedSongIds().clear();
+        for (User u : room.getUsers()){
+            u.setScore(0);
+            u.setReady(false);
+        }
+
+       lobbyPhase(roomId);
     }
     public void handleUserVote(String roomId, String userId, String content){
         Room room = roomService.getRoom(roomId);
