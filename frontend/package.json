@@ -12,12 +12,16 @@
   "dependencies": {
     "@stomp/stompjs": "^7.2.1",
     "axios": "^1.13.2",
+    "events": "^3.3.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.10.1",
     "react-youtube": "^10.1.0",
+    "simple-peer": "^9.11.1",
     "sockjs-client": "^1.6.1",
-    "stompjs": "^2.3.3"
+    "stompjs": "^2.3.3",
+    "util": "^0.12.5",
+    "vite-plugin-node-polyfills": "^0.26.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

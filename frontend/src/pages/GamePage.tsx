@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 
 import VideoPlayer from "../components/VideoPlayer";
-import type { SocketMessage } from "../types/socket";
+import type { SocketMessage, RtcSignalPayload } from "../types/socket";
 import type { GameState, MusicInfo } from "../types/game";
 import { websocketService } from "../services/websocketService";
 import type { User } from "../types/user";
@@ -24,6 +24,9 @@ export default function GamePage() {
     const [myScore, setMyScore] = useState(0);
     const [hasVoted, setHasVoted] = useState(false);
     const [playerList, setPlayerList] = useState<User[]>([]);
+    const [voiceEnabled, setVoiceEnabled] = useState(false);
+    const [hasMicPermission, setHasMicPermission] = useState(false);
+    const [micPermissionAsked, setMicPermissionAsked] = useState(false);
 
     const [musicInfo, setMusicInfo] = useState<MusicInfo>({
         videoUrl: "",
@@ -31,6 +34,20 @@ export default function GamePage() {
         isPlaying: false,
         serverStartTime: 0,
     });
+
+    const playSound = (fileName: string) => {
+        const audio = new Audio(`/sounds/${fileName}`);
+        audio.play().catch(error => console.log("Chưa thể phát âm thanh:", error));
+    };
+
+    const localStreamRef = useRef<MediaStream | null>(null);
+    const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
+    const remoteAudioRef = useRef<Record<string, HTMLAudioElement>>({});
+    const remoteStreamRef = useRef<Record<string, MediaStream>>({});
+
+    const rtcConfig: RTCConfiguration = {
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    };
 
     // Xử lý đếm ngược
     useEffect(() => {
@@ -43,6 +60,186 @@ export default function GamePage() {
         }
     }, [gameState]);
 
+    const requestMicPermission = async (showAlert: boolean) => {
+        setMicPermissionAsked(true);
+        if (!navigator.mediaDevices?.getUserMedia) {
+            if (showAlert) {
+                alert("Trình duyệt không hỗ trợ Micro.");
+            }
+            return false;
+        }
+        try {
+            await ensureLocalStream();
+            return true;
+        } catch (err) {
+            console.error("Lỗi Mic:", err);
+            if (showAlert) {
+                alert("Vui lòng cấp quyền Micro để dùng voice.");
+            }
+            return false;
+        }
+    };
+
+    const ensureLocalStream = async () => {
+        if (localStreamRef.current) {
+            return localStreamRef.current;
+        }
+        if (!navigator.mediaDevices?.getUserMedia) {
+            alert("Trình duyệt không hỗ trợ Micro.");
+            return null;
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                channelCount: 1,
+            },
+        });
+        localStreamRef.current = stream;
+        setHasMicPermission(true);
+        setMicPermissionAsked(true);
+        stream.getAudioTracks().forEach(track => {
+            track.enabled = false;
+        });
+        attachLocalTracks();
+        return stream;
+    };
+
+    const setLocalTrackEnabled = (enabled: boolean) => {
+        if (!localStreamRef.current) return;
+        localStreamRef.current.getAudioTracks().forEach(track => {
+            track.enabled = enabled;
+        });
+    };
+
+    const attachLocalTracks = () => {
+        if (!localStreamRef.current) return;
+        const tracks = localStreamRef.current.getTracks();
+        Object.values(peerConnectionsRef.current).forEach(pc => {
+            tracks.forEach(track => {
+                const existingSender = pc.getSenders().find(sender => sender.track?.kind === track.kind);
+                if (existingSender) {
+                    existingSender.replaceTrack(track);
+                } else {
+                    pc.addTrack(track, localStreamRef.current as MediaStream);
+                }
+            });
+        });
+    };
+
+    const sendRtcSignal = (payload: RtcSignalPayload) => {
+        if (!roomId) return;
+        websocketService.sendMessage(roomId, {
+            type: "RTC_SIGNAL",
+            content: payload,
+            sender: userId,
+            roomId: roomId,
+        });
+    };
+
+    const createPeerConnection = (peerId: string) => {
+        const existing = peerConnectionsRef.current[peerId];
+        if (existing) return existing;
+        const pc = new RTCPeerConnection(rtcConfig);
+
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                sendRtcSignal({
+                    action: "candidate",
+                    from: userId,
+                    to: peerId,
+                    candidate: event.candidate.toJSON(),
+                });
+            }
+        };
+
+        pc.ontrack = (event) => {
+            let stream = remoteStreamRef.current[peerId];
+            if (!stream) {
+                stream = new MediaStream();
+                remoteStreamRef.current[peerId] = stream;
+            }
+            stream.addTrack(event.track);
+
+            let audio = remoteAudioRef.current[peerId];
+            if (!audio) {
+                audio = new Audio();
+                audio.autoplay = true;
+                audio.preload = "auto";
+                audio.playsInline = true;
+                remoteAudioRef.current[peerId] = audio;
+            }
+            if (audio.srcObject !== stream) {
+                audio.srcObject = stream;
+            }
+            audio.play().catch(() => undefined);
+        };
+
+        pc.onconnectionstatechange = () => {
+            if (pc.connectionState === "failed" || pc.connectionState === "closed" || pc.connectionState === "disconnected") {
+                pc.close();
+                delete peerConnectionsRef.current[peerId];
+                const audio = remoteAudioRef.current[peerId];
+                if (audio) {
+                    audio.srcObject = null;
+                    delete remoteAudioRef.current[peerId];
+                }
+                if (remoteStreamRef.current[peerId]) {
+                    delete remoteStreamRef.current[peerId];
+                }
+            }
+        };
+
+        peerConnectionsRef.current[peerId] = pc;
+        if (localStreamRef.current) {
+            attachLocalTracks();
+        }
+        return pc;
+    };
+
+    const isForcedVoice = gameState === "PERFORMANCE" && winnerUser?.userId === userId;
+    const isMusicPlaying = gameState === "PLAY_SEGMENT";
+    const isOtherPerformance = gameState === "PERFORMANCE" && winnerUser?.userId && winnerUser.userId !== userId;
+    const shouldStreamVoice = voiceEnabled || isForcedVoice;
+
+    useEffect(() => {
+        setLocalTrackEnabled(shouldStreamVoice);
+        if (shouldStreamVoice && !localStreamRef.current) {
+            ensureLocalStream().catch(() => undefined);
+        }
+    }, [shouldStreamVoice]);
+
+    useEffect(() => {
+        requestMicPermission(false);
+    }, []);
+
+    useEffect(() => {
+        if ((isMusicPlaying || isOtherPerformance) && voiceEnabled) {
+            setVoiceEnabled(false);
+        }
+    }, [isMusicPlaying, isOtherPerformance, voiceEnabled]);
+
+    useEffect(() => {
+        if (!userId) return;
+        const peers = playerList.map(p => p.userId).filter(id => id && id !== userId);
+        peers.forEach((peerId) => {
+            const pc = createPeerConnection(peerId);
+            const shouldCreateOffer = userId < peerId
+                && pc.signalingState === "stable"
+                && !pc.currentLocalDescription
+                && !pc.currentRemoteDescription;
+            if (shouldCreateOffer) {
+                pc.createOffer()
+                    .then(offer => pc.setLocalDescription(offer).then(() => offer))
+                    .then(offer => {
+                        sendRtcSignal({ action: "offer", from: userId, to: peerId, sdp: offer });
+                    })
+                    .catch(err => console.error("Lỗi tạo offer:", err));
+            }
+        });
+    }, [playerList, userId]);
+
     // Xử lý WebSocket
     useEffect(() => {
         if (roomId) {
@@ -54,6 +251,9 @@ export default function GamePage() {
                 }
                 else if (message.type === "CHAT") {
                     setMessages((prevMessages) => [...prevMessages, message]);
+                    if (message.sender !== userName) {
+                        playSound("ting.mp3");
+                    }
                 } else if (message.type === "PLAY_SEGMENT") {
                     try {
                         const state = message.content as MusicInfo;
@@ -102,14 +302,16 @@ export default function GamePage() {
                     );
 
                     if (isSuccess) {
+                        playSound("success.mp3");
                         setNotification(`Chúc mừng ${performanceUser.userName} đã được cộng 1 điểm! 🎉`);
                     } else {
+                        playSound("failure.mp3");
                         setNotification(`Rất tiếc ${performanceUser.userName} chưa được cộng điểm. 😢`);
                     }
                 }
                 else if (message.type === "END_GAME") {
                     setGameState("END_GAME");
-
+                    playSound("applause.mp3");
                 }
                 else if (message.type === "LOBBY") {
                     setPlayerList(message.content as User[]);
@@ -123,6 +325,34 @@ export default function GamePage() {
                     if (typeof message.content === "string" && message.content === userId) {
                         alert("Bạn đã bị chủ phòng đá khỏi phòng. 😢");
                         window.location.href = "/";
+                    }
+                }
+                else if (message.type === "VOICE") {
+                    return;
+                }
+                else if (message.type === "RTC_SIGNAL") {
+                    if (typeof message.content === "string") return;
+                    const payload = message.content as RtcSignalPayload;
+                    if (!payload || payload.from === userId) return;
+                    if (payload.to && payload.to !== userId) return;
+
+                    const peerId = payload.from;
+                    const pc = createPeerConnection(peerId);
+
+                    if (payload.action === "offer" && payload.sdp) {
+                        pc.setRemoteDescription(new RTCSessionDescription(payload.sdp))
+                            .then(() => pc.createAnswer())
+                            .then(answer => pc.setLocalDescription(answer).then(() => answer))
+                            .then(answer => {
+                                sendRtcSignal({ action: "answer", from: userId, to: peerId, sdp: answer });
+                            })
+                            .catch(err => console.error("Lỗi nhận offer:", err));
+                    } else if (payload.action === "answer" && payload.sdp) {
+                        pc.setRemoteDescription(new RTCSessionDescription(payload.sdp))
+                            .catch(err => console.error("Lỗi nhận answer:", err));
+                    } else if (payload.action === "candidate" && payload.candidate) {
+                        pc.addIceCandidate(new RTCIceCandidate(payload.candidate))
+                            .catch(err => console.error("Lỗi ICE candidate:", err));
                     }
                 }
             });
@@ -140,6 +370,17 @@ export default function GamePage() {
             return () => {
                 clearTimeout(joinTimeout); // Dọn dẹp timeout nếu user thoát trang sớm
                 websocketService.disconnect();
+                Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
+                peerConnectionsRef.current = {};
+                Object.values(remoteAudioRef.current).forEach(audio => {
+                    audio.srcObject = null;
+                });
+                remoteAudioRef.current = {};
+                remoteStreamRef.current = {};
+                if (localStreamRef.current) {
+                    localStreamRef.current.getTracks().forEach(track => track.stop());
+                    localStreamRef.current = null;
+                }
             }
         }
     }, [roomId, userId]);
@@ -152,6 +393,7 @@ export default function GamePage() {
 
     const handleBuzzerClick = () => {
         if (!roomId) return;
+        playSound("buzzer.mp3");
         setClickCount(prev => prev + 1);
         websocketService.sendMessage(roomId, { type: "BATTLE", content: "", sender: userId, roomId });
     };
@@ -167,6 +409,18 @@ export default function GamePage() {
             websocketService.sendMessage(roomId, { type: "CHAT", content: inputMessage, sender: userName, roomId });
             setInputMessage("");
         }
+    };
+
+    const handleToggleVoice = async () => {
+        if (isForcedVoice || isMusicPlaying || isOtherPerformance) return;
+        if (!voiceEnabled && !hasMicPermission) {
+            const ok = await requestMicPermission(true);
+            if (!ok) return;
+        }
+        if (!voiceEnabled && !localStreamRef.current) {
+            await ensureLocalStream();
+        }
+        setVoiceEnabled(prev => !prev);
     };
 
     // --- CÁC BIẾN & HÀM CHUẨN BỊ CHO LOBBY ---
@@ -223,6 +477,25 @@ export default function GamePage() {
                     <div style={{ backgroundColor: 'rgba(0,0,0,0.4)', padding: '5px 20px', borderRadius: '30px', border: '1px solid #2ed573' }}>
                         ⭐ Điểm của bạn: <span style={{ color: '#2ed573', fontSize: '22px' }}>{myScore}</span>
                     </div>
+                    <button
+                        onClick={handleToggleVoice}
+                        disabled={isForcedVoice || isMusicPlaying || isOtherPerformance}
+                        title={isMusicPlaying
+                            ? "Đang phát nhạc, không thể mở mic"
+                            : (isOtherPerformance
+                                ? "Đang có người khác hát"
+                                : (!hasMicPermission && micPermissionAsked ? "Bạn cần cấp quyền truy cập Micro" : undefined))}
+                        style={{
+                            padding: '6px 18px', borderRadius: '30px', border: '1px solid #ff4757',
+                            backgroundColor: shouldStreamVoice ? '#ff4757' : 'rgba(0,0,0,0.4)',
+                            color: 'white', fontWeight: 'bold', cursor: isForcedVoice ? 'not-allowed' : 'pointer'
+                        }}
+                    >
+                        {isForcedVoice ? '🎙️ MIC BẮT BUỘC' : (voiceEnabled ? '🔊 VOICE ON' : '🔇 VOICE OFF')}
+                        {!hasMicPermission && micPermissionAsked && (
+                            <span style={{ marginLeft: '6px', color: '#ffdd59', fontWeight: 'bold' }}>!</span>
+                        )}
+                    </button>
                     <div style={{ backgroundColor: 'rgba(0,0,0,0.4)', padding: '5px 20px', borderRadius: '30px' }}>
                         Phòng: <span style={{ color: '#FFD700' }}>{roomId}</span> | ID: {userName}
                     </div>
@@ -318,6 +591,7 @@ export default function GamePage() {
                                 startSeconds={musicInfo.startSeconds}
                                 isPlaying={musicInfo.isPlaying}
                                 serverStartTime={musicInfo.serverStartTime}
+                                muted={gameState === "PERFORMANCE"}
                             />
                         )}
 
