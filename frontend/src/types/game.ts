@@ -8,7 +8,13 @@ export type GameState =
     | "CHAT" 
     | "PAUSE"
     | "WINNER_SHOW"
-    | "COUNTDOWN";
+    | "COUNTDOWN"
+    | "VOICE"
+    | "RTC_SIGNAL"
+    | "SCORE_SHOW"
+    | "END_GAME"
+    | "KICK_PLAYER"
+    | "TOGGLE_READY";
 export interface MusicInfo {
     videoUrl: string;
     startSeconds: number;

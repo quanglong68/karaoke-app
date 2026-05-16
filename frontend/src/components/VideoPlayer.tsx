@@ -5,14 +5,17 @@ interface VideoPlayerProps {
     startSeconds: number;
     isPlaying: boolean;
     serverStartTime: number;
+    muted?: boolean;
 }
 
-export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverStartTime }: VideoPlayerProps) {
+export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverStartTime, muted = false }: VideoPlayerProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
 
     useEffect(() => {
         const video = videoRef.current;
         if (!video) return;
+
+        video.muted = muted;
 
         if (isPlaying && videoUrl) {
             // 1. Tính toán thời gian đáng lẽ video phải chạy tới đâu rồi
@@ -38,7 +41,7 @@ export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverS
         } else {
             video.pause();
         }
-    }, [isPlaying, serverStartTime, startSeconds, videoUrl]);
+    }, [isPlaying, serverStartTime, startSeconds, videoUrl, muted]);
 
     if (!videoUrl) {
         return (
@@ -60,6 +63,7 @@ export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverS
                 width="100%"
                 height="100%"
                 style={{ objectFit: 'cover' }}
+                muted={muted}
                 autoPlay={false}
                 controls={false} // Chặn người dùng tự ý tua video
             />
