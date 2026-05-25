@@ -1,7 +1,6 @@
 import type { GameState, MusicInfo } from "./game";
-import type { VoteResultPayload } from "./room";
 import type { User } from "./user";
-
+import type { PerformanceResultPayload } from "./room";
 export interface VoicePayload {
     data: string;
     mimeType: string;
@@ -18,7 +17,7 @@ export interface RtcSignalPayload {
 
 export interface SocketMessage {
     type: GameState;
-    content: string | MusicInfo | User | VoteResultPayload | User[] | VoicePayload | RtcSignalPayload;
+    content: string | MusicInfo | User | PerformanceResultPayload | User[] | VoicePayload | RtcSignalPayload;
     sender: string;
     roomId: string;
 }

@@ -6,14 +6,21 @@ import type { SocketMessage, RtcSignalPayload } from "../types/socket";
 import type { GameState, MusicInfo } from "../types/game";
 import { websocketService } from "../services/websocketService";
 import type { User } from "../types/user";
-import type { VoteResultPayload } from "../types/room";
+import type { PerformanceResultPayload } from "../types/room";
+import { storage } from "../utils/storage";
 
 export default function GamePage() {
     const { roomId } = useParams();
     const [messages, setMessages] = useState<SocketMessage[]>([]);
     const [inputMessage, setInputMessage] = useState("");
-    const userName = localStorage.getItem("userName") || "Người chơi ẩn danh";
-    const userId = localStorage.getItem("userId") || "";
+    const userName = storage.getUserName() || "Người chơi ẩn danh";
+    const userId = storage.getUserId();
+    const [perfCountdown, setPerfCountdown] = useState(30);
+
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const pitchContourRef = useRef<number[]>([]);
+    const pitchIntervalRef = useRef<any>(null);
 
     const [gameState, setGameState] = useState<GameState>("LOBBY");
     const [clickCount, setClickCount] = useState(0);
@@ -22,11 +29,138 @@ export default function GamePage() {
     const [countdownNum, setCountdownNum] = useState(3);
 
     const [myScore, setMyScore] = useState(0);
-    const [hasVoted, setHasVoted] = useState(false);
     const [playerList, setPlayerList] = useState<User[]>([]);
     const [voiceEnabled, setVoiceEnabled] = useState(false);
     const [hasMicPermission, setHasMicPermission] = useState(false);
     const [micPermissionAsked, setMicPermissionAsked] = useState(false);
+
+    const fullTranscriptRef = useRef("");
+    const speechRecognitionRef = useRef<any>(null);
+
+    const currentSongLyricsRef = useRef("");
+
+    const sendRoomMessage = (type: GameState, content: SocketMessage["content"], senderOverride?: string) => {
+        if (!roomId) return;
+        websocketService.sendMessage(roomId, {
+            type,
+            content,
+            sender: senderOverride ?? userId,
+            roomId: roomId,
+        });
+    };
+
+    const evaluateLyricsResult = (userSangText: string) => {
+        const cleanUserText = userSangText.toLowerCase();
+
+        console.log("===============================");
+        console.log("🎤 LỜI BÀI HÁT GỬI ĐI:", cleanUserText);
+        console.log("🎵 MẢNG TẦN SỐ (TONE) GỬI ĐI:", pitchContourRef.current);
+        console.log("===============================");
+        sendRoomMessage("USER_LYRICS", {
+            lyrics: cleanUserText,
+            pitchContour: pitchContourRef.current
+        });
+    };
+
+    useEffect(() => {
+        if (gameState === "PERFORMANCE") {
+            setPerfCountdown(30); // Reset về 30 giây khi bắt đầu hát
+            const timer = setInterval(() => {
+                setPerfCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+            }, 1000);
+            return () => clearInterval(timer);
+        }
+    }, [gameState]);
+
+
+    useEffect(() => {
+        const isSinger = winnerUser?.userId === userId;
+        if (gameState === "PERFORMANCE" && isSinger) {
+            fullTranscriptRef.current = "";
+            pitchContourRef.current = []; // Xóa dữ liệu cũ
+
+            // 1. KHỞI ĐỘNG MÁY ĐO TẦN SỐ (PITCH DETECTOR)
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            if (AudioContextClass && localStreamRef.current) {
+                audioContextRef.current = new AudioContextClass();
+                analyserRef.current = audioContextRef.current.createAnalyser();
+                analyserRef.current.fftSize = 2048;
+                const source = audioContextRef.current.createMediaStreamSource(localStreamRef.current);
+                source.connect(analyserRef.current);
+
+                // Cứ 0.2s đo 1 lần 
+                pitchIntervalRef.current = setInterval(() => {
+                    if (!analyserRef.current || !audioContextRef.current) return;
+                    const buffer = new Float32Array(analyserRef.current.fftSize);
+                    analyserRef.current.getFloatTimeDomainData(buffer);
+                    const hz = autoCorrelate(buffer, audioContextRef.current.sampleRate);
+
+                    // 👉 BỘ LỌC NHIỄU: Chỉ chấp nhận tần số giọng người thật (80Hz - 1000Hz)
+                    let validHz = 0.0;
+                    if (hz !== -1 && hz >= 80 && hz <= 1000) {
+                        validHz = Number(hz.toFixed(2));
+                    }
+
+                    pitchContourRef.current.push(validHz);
+                }, 200);
+            }
+
+            // 2. KHỞI ĐỘNG CỖ MÁY AI BẮT CHỮ (Đã khôi phục lại máy trợ tim)
+            const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+            if (SpeechRecognition) {
+                const recognition = new SpeechRecognition();
+                speechRecognitionRef.current = recognition;
+
+                recognition.continuous = true;
+                recognition.interimResults = true;
+                recognition.lang = 'vi-VN';
+
+                recognition.onresult = (event: any) => {
+                    let textBlock = '';
+                    for (let i = 0; i < event.results.length; i++) {
+                        textBlock += event.results[i][0].transcript + ' ';
+                    }
+                    fullTranscriptRef.current = textBlock;
+                };
+
+                recognition.onerror = (event: any) => {
+                    console.error("🚨 Lỗi cỗ máy AI:", event.error);
+                };
+
+                recognition.onend = () => {
+                    if (speechRecognitionRef.current) {
+                        try {
+                            speechRecognitionRef.current.start();
+                        } catch (err) { }
+                    }
+                };
+
+                recognition.start();
+            }
+
+        } else {
+            // 👉 KHI DỪNG HÁT: Tắt máy đo tần số trước
+            if (pitchIntervalRef.current) clearInterval(pitchIntervalRef.current);
+            if (audioContextRef.current) {
+                audioContextRef.current.close();
+                audioContextRef.current = null;
+            }
+
+            // 👉 KHI DỪNG HÁT: Tắt máy bắt chữ
+            if (speechRecognitionRef.current) {
+                speechRecognitionRef.current.stop();
+                speechRecognitionRef.current = null;
+            }
+
+            // 👉 LUÔN LUÔN NỘP BÀI (Dù máy thu âm có bị lỗi hay không)
+            const finalVoiceText = fullTranscriptRef.current.trim();
+            if (gameState === "PERFORMANCE_EVALUATION" && isSinger) {
+                evaluateLyricsResult(finalVoiceText || " ");
+            } else {
+                fullTranscriptRef.current = "";
+            }
+        }
+    }, [gameState, winnerUser, userId]);
 
     const [musicInfo, setMusicInfo] = useState<MusicInfo>({
         videoUrl: "",
@@ -247,7 +381,9 @@ export default function GamePage() {
 
             websocketService.connect(roomId, (message) => {
                 if (message.type === "JOIN") {
-                    setPlayerList(message.content as User[]);
+                    if (Array.isArray(message.content)) {
+                        setPlayerList(message.content as User[]);
+                    }
                 }
                 else if (message.type === "CHAT") {
                     setMessages((prevMessages) => [...prevMessages, message]);
@@ -276,15 +412,14 @@ export default function GamePage() {
                 } else if (message.type === "COUNTDOWN") {
                     setGameState("COUNTDOWN");
                 } else if (message.type === "PERFORMANCE") {
-                    const newMusicInfo = message.content as MusicInfo;
-                    setMusicInfo(newMusicInfo);
+                    currentSongLyricsRef.current = message.content as string;
                     setGameState("PERFORMANCE");
-                } else if (message.type === "VOTE") {
-                    setHasVoted(false);
-                    setGameState("VOTE");
+                } else if (message.type === "PERFORMANCE_EVALUATION") {
+                    setGameState("PERFORMANCE_EVALUATION");
+                    //lúc này in ra màn hình là chờ kết quả đánh giá, khi nào dưới be phân tích kết quả xong rồi, gửi state là score show sẽ tiếp tục
                 } else if (message.type === "SCORE_SHOW") {
                     setGameState("SCORE_SHOW");
-                    const payload = message.content as VoteResultPayload;
+                    const payload = message.content as PerformanceResultPayload;
                     const performanceUser = payload.user;
                     const isSuccess = payload.isSuccess;
 
@@ -314,11 +449,17 @@ export default function GamePage() {
                     playSound("applause.mp3");
                 }
                 else if (message.type === "LOBBY") {
-                    setPlayerList(message.content as User[]);
+                    if (Array.isArray(message.content)) {
+                        setPlayerList(message.content as User[]);
+                    } else if (typeof message.content === "string") {
+                        console.log("Thông báo từ Lobby:", message.content);
+                        setNotification(message.content);
+                    }
+
                     setMyScore(0);
-                    setNotification(null);
+                    // Giữ lại các reset khác
+                    // setNotification(null); // Tạm thời xóa dòng này để xem thông báo ở trên
                     setWinnerUser(null);
-                    setHasVoted(false);
                     setGameState("LOBBY");
                 }
                 else if (message.type === "KICK_PLAYER") {
@@ -359,12 +500,7 @@ export default function GamePage() {
 
             // Gửi lời chào JOIN sau khi delay 1s để đảm bảo WS đã connect
             const joinTimeout = setTimeout(() => {
-                websocketService.sendMessage(roomId, {
-                    type: "JOIN",
-                    content: "",
-                    sender: userId,
-                    roomId: roomId
-                });
+                sendRoomMessage("JOIN", "");
             }, 1000);
 
             return () => {
@@ -387,26 +523,18 @@ export default function GamePage() {
 
     // Các hàm xử lý sự kiện
     const handleStartGame = () => {
-        if (!roomId) return;
-        websocketService.sendMessage(roomId, { type: "PLAY_SEGMENT", content: "", sender: userId, roomId });
+        sendRoomMessage("PLAY_SEGMENT", "");
     };
 
     const handleBuzzerClick = () => {
-        if (!roomId) return;
         playSound("buzzer.mp3");
         setClickCount(prev => prev + 1);
-        websocketService.sendMessage(roomId, { type: "BATTLE", content: "", sender: userId, roomId });
-    };
-
-    const handleVoteClick = (isLike: boolean) => {
-        if (!roomId) return;
-        setHasVoted(true);
-        websocketService.sendMessage(roomId, { type: "VOTE", content: isLike.toString(), sender: userId, roomId });
+        sendRoomMessage("BATTLE", "");
     };
 
     const handleSendMessage = () => {
         if (roomId && inputMessage.trim()) {
-            websocketService.sendMessage(roomId, { type: "CHAT", content: inputMessage, sender: userName, roomId });
+            sendRoomMessage("CHAT", inputMessage, userName);
             setInputMessage("");
         }
     };
@@ -432,14 +560,13 @@ export default function GamePage() {
     const allReady = playerList.length > 1 && playerList.every(u => u.isHost || u.isReady);
 
     const handleToggleReady = () => {
-        if (!roomId) return;
-        websocketService.sendMessage(roomId, { type: "TOGGLE_READY", content: "", sender: userId, roomId });
+        sendRoomMessage("TOGGLE_READY", "");
     };
 
     const handleKickPlayer = (kickedId: string) => {
         if (!roomId) return;
         if (window.confirm("Bạn có chắc chắn muốn mời người này ra khỏi phòng?")) {
-            websocketService.sendMessage(roomId, { type: "KICK_PLAYER", content: kickedId, sender: userId, roomId });
+            sendRoomMessage("KICK_PLAYER", kickedId);
         }
     };
 
@@ -584,14 +711,72 @@ export default function GamePage() {
                                     ))}
                                 </div>
                             </div>
+                        ) : gameState === "PERFORMANCE" ? (
+                            // KHUNG BAO NGOÀI CỐ ĐỊNH CHIỀU CAO THEO MÀN HÌNH 16:9
+                            <div style={{
+                                width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+                                justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1e1e2f',
+                                padding: '20px', boxSizing: 'border-box'
+                            }}>
+
+                                {/* TẦNG 1: HEADER - TIÊU ĐỀ VÀ THANH THỜI GIAN ĐẾM NGƯỢC */}
+                                <div style={{ width: '100%', textAlign: 'center', flexShrink: 0 }}>
+                                    <h2 style={{ color: '#FFD700', fontSize: '26px', margin: '0 0 10px 0', animation: 'pulse 1s infinite' }}>
+                                        🎤 HÃY HÁT THEO LỜI SAU (Còn {perfCountdown}s) 🎤
+                                    </h2>
+
+                                    {/* THANH PROGRESS BAR XỊN XÒ */}
+                                    <div style={{ width: '80%', height: '12px', backgroundColor: '#2f3542', borderRadius: '6px', margin: '0 auto', overflow: 'hidden', border: '1px solid #747d8c' }}>
+                                        <div style={{
+                                            width: `${(perfCountdown / 30) * 100}%`,
+                                            height: '100%',
+                                            background: 'linear-gradient(90deg, #ff4757, #ffa502)',
+                                            transition: 'width 1s linear', // Tạo hiệu ứng mượt mà khi tụt thời gian
+                                            borderRadius: '6px'
+                                        }} />
+                                    </div>
+                                </div>
+
+                                {/* TẦNG 2: THÂN MÀN HÌNH - CHỨA LYRICS TỰ CO GIÃN VÀ CÓ THANH CUỘN */}
+                                <div style={{
+                                    backgroundColor: 'rgba(0,0,0,0.5)', padding: '20px', borderRadius: '15px', border: '2px solid #ff4757',
+                                    width: '80%', textAlign: 'center', boxShadow: '0 0 20px rgba(255, 71, 87, 0.3)',
+                                    flex: 1, margin: '15px 0', overflowY: 'auto' // flex:1 giúp nó nuốt trọn không gian thừa, overflowY giúp tự xuất hiện thanh cuộn
+                                }}>
+                                    <p style={{ fontSize: '24px', color: '#fff', whiteSpace: 'pre-wrap', lineHeight: '1.6', margin: 0 }}>
+                                        {currentSongLyricsRef.current || "Đang tải lời bài hát..."}
+                                    </p>
+                                </div>
+
+                                {/* TẦNG 3: FOOTER - NÚT BẤM KẾT THÚC (KHÓA CHẾT VỊ TRÍ Ở ĐÁY) */}
+                                <div style={{ width: '100%', display: 'flex', justifyContent: 'center', height: '55px', flexShrink: 0 }}>
+                                    {winnerUser?.userId === userId ? (
+                                        <button
+                                            onClick={() => {
+                                                sendRoomMessage("PERFORMANCE_EVALUATION", "");
+                                            }}
+                                            style={{
+                                                padding: '10px 40px', fontSize: '20px', fontWeight: 'bold',
+                                                backgroundColor: '#2ed573', color: 'white', border: 'none', borderRadius: '40px',
+                                                cursor: 'pointer', boxShadow: '0 5px 15px rgba(46, 213, 115, 0.5)'
+                                            }}>
+                                            ✅ HÁT XONG RỒI!
+                                        </button>
+                                    ) : (
+                                        // Khán giả không bấm được nút nhưng vẫn giữ khoảng trống để giao diện cân đối
+                                        <p style={{ color: '#a4b0be', fontSize: '16px', margin: 0 }}>Bạn đang lắng nghe ca sĩ biểu diễn...</p>
+                                    )}
+                                </div>
+                            </div>
+
                         ) : (
-                            // HIỂN THỊ VIDEO KHI CHƠI
+                            // 👉 2. NẾU LÀ CÁC TRẠNG THÁI KHÁC (Nghe nhạc, Đập nút...): Vẫn hiện Video
                             <VideoPlayer
                                 videoUrl={musicInfo.videoUrl}
                                 startSeconds={musicInfo.startSeconds}
                                 isPlaying={musicInfo.isPlaying}
                                 serverStartTime={musicInfo.serverStartTime}
-                                muted={gameState === "PERFORMANCE"}
+                                muted={false} // Không cần tắt tiếng nữa
                             />
                         )}
 
@@ -628,31 +813,14 @@ export default function GamePage() {
                             </div>
                         )}
 
-                        {gameState === "VOTE" && (
+                        {gameState === "PERFORMANCE_EVALUATION" && (
                             <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.9)', zIndex: 40, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', color: 'white' }}>
-                                {userId === winnerUser?.userId ? (
-                                    <div style={{ textAlign: 'center' }}>
-                                        <h2 style={{ color: '#FFD700', fontSize: '36px' }}>🎤 Đã biểu diễn xong!</h2>
-                                        <p style={{ fontSize: '24px', color: '#aaa', animation: 'blink 1.5s infinite' }}>Đang chờ khán giả cho điểm... ⏳</p>
-                                    </div>
-                                ) : (
-                                    <div style={{ textAlign: 'center' }}>
-                                        <h2 style={{ color: '#00ffcc', fontSize: '32px', marginBottom: '40px' }}>
-                                            Bạn thấy <span style={{ color: '#FFD700' }}>{winnerUser?.userName}</span> hát thế nào?
-                                        </h2>
-                                        {hasVoted ? (
-                                            <div style={{ padding: '20px 40px', backgroundColor: 'rgba(46, 213, 115, 0.1)', borderRadius: '15px', border: '2px dashed #2ed573' }}>
-                                                <h3 style={{ color: '#2ed573', fontSize: '28px', margin: '0 0 10px 0' }}>✅ Đã gửi đánh giá!</h3>
-                                                <p style={{ fontSize: '20px', color: '#ddd', animation: 'blink 1.5s infinite', margin: 0 }}>Đang chờ kết quả chung cuộc...</p>
-                                            </div>
-                                        ) : (
-                                            <div style={{ display: 'flex', gap: '40px', justifyContent: 'center' }}>
-                                                <button onClick={() => handleVoteClick(true)} style={{ padding: '20px 50px', fontSize: '28px', fontWeight: 'bold', cursor: 'pointer', backgroundColor: '#2ed573', color: 'white', border: '4px solid white', borderRadius: '50px' }}>👍 QUÁ HAY!</button>
-                                                <button onClick={() => handleVoteClick(false)} style={{ padding: '20px 50px', fontSize: '28px', fontWeight: 'bold', cursor: 'pointer', backgroundColor: '#ff4757', color: 'white', border: '4px solid white', borderRadius: '50px' }}>👎 Ò Ó O...</button>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
+                                <div style={{ textAlign: 'center' }}>
+                                    <h2 style={{ color: '#FFD700', fontSize: '36px' }}>🎤 Đã biểu diễn xong!</h2>
+                                    <p style={{ fontSize: '24px', color: '#00ffcc', animation: 'blink 1.5s infinite' }}>
+                                        🤖 AI đang phân tích và chấm điểm giọng hát... ⏳
+                                    </p>
+                                </div>
                             </div>
                         )}
 
@@ -752,4 +920,45 @@ export default function GamePage() {
             </style>
         </div>
     );
+}
+// THUẬT TOÁN ĐO TẦN SỐ (PITCH DETECTION) TỪ SÓNG ÂM
+function autoCorrelate(buf: Float32Array, sampleRate: number) {
+    let SIZE = buf.length;
+    let rms = 0;
+    for (let i = 0; i < SIZE; i++) {
+        let val = buf[i];
+        rms += val * val;
+    }
+    rms = Math.sqrt(rms / SIZE);
+    if (rms < 0.01) return -1; // Nếu âm thanh quá nhỏ (im lặng) -> Bỏ qua
+
+    let r1 = 0, r2 = SIZE - 1, thres = 0.2;
+    for (let i = 0; i < SIZE / 2; i++)
+        if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+    for (let i = 1; i < SIZE / 2; i++)
+        if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+
+    buf = buf.slice(r1, r2);
+    SIZE = buf.length;
+
+    let c = new Array(SIZE).fill(0);
+    for (let i = 0; i < SIZE; i++)
+        for (let j = 0; j < SIZE - i; j++)
+            c[i] = c[i] + buf[j] * buf[j + i];
+
+    let d = 0; while (c[d] > c[d + 1]) d++;
+    let maxval = -1, maxpos = -1;
+    for (let i = d; i < SIZE; i++) {
+        if (c[i] > maxval) {
+            maxval = c[i];
+            maxpos = i;
+        }
+    }
+    let T0 = maxpos;
+    let x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+    let a = (x1 + x3 - 2 * x2) / 2;
+    let b = (x3 - x1) / 2;
+    if (a) T0 = T0 - b / (2 * a);
+
+    return sampleRate / T0; // Trả về Hz
 }
