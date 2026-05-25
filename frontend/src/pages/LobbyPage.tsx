@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { roomService } from "../services/roomService";
 import { useNavigate } from "react-router-dom";
-
-
+import { storage } from "../utils/storage";
 
 export default function LobbyPage() {
-    const [roomName, setRoomName] = useState(() => { return localStorage.getItem("roomName") || "" });
-    const [userName, setUserName] = useState(() => { return localStorage.getItem("userName") || "" });
+    const [roomName, setRoomName] = useState(() => storage.getRoomName());
+    const [userName, setUserName] = useState(() => storage.getUserName());
     const [joinId, setJoinId] = useState("");
     const navigate = useNavigate();
 
@@ -15,10 +14,10 @@ export default function LobbyPage() {
             alert("Please enter your name and room ID");
             return;
         }
-        localStorage.setItem("userName", userName);
+        storage.setUserName(userName);
         try {
             const data = await roomService.joinRoom(joinId, userName);
-            localStorage.setItem("userId", data.user.userId);
+            storage.setUserId(data.user.userId);
 
             alert("Joined room: " + data.room.roomId);
             navigate(`/room/${data.room.roomId}`);
@@ -33,11 +32,11 @@ export default function LobbyPage() {
             alert("Please enter your name and room name");
             return;
         }
-        localStorage.setItem("roomName", roomName);
-        localStorage.setItem("userName", userName);
+        storage.setRoomName(roomName);
+        storage.setUserName(userName);
         try {
             const data = await roomService.createRoom(roomName, userName);
-            localStorage.setItem("userId", data.user.userId);
+            storage.setUserId(data.user.userId);
             alert("Tạo phòng thành công. ID Phòng: " + data.room.roomId);
             navigate(`/room/${data.room.roomId}`);
         } catch (error) {

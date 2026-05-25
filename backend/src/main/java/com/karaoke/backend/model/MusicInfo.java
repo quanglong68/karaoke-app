@@ -15,5 +15,4 @@ public class MusicInfo {
     private long serverStartTime;
     @JsonProperty("isPlaying")
     private boolean isPlaying;
-
 }

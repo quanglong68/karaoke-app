@@ -14,7 +14,9 @@ export type GameState =
     | "SCORE_SHOW"
     | "END_GAME"
     | "KICK_PLAYER"
-    | "TOGGLE_READY";
+    | "TOGGLE_READY"
+    | "USER_LYRICS"
+    | "PERFORMANCE_EVALUATION";
 export interface MusicInfo {
     videoUrl: string;
     startSeconds: number;

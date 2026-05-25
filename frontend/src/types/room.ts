@@ -11,3 +11,8 @@ export interface JoinRoomResponse {
   room: Room
   user: User
 }
+
+export interface PerformanceResultPayload {
+    user: User;
+    isSuccess: boolean;
+}
