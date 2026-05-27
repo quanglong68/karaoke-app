@@ -1,11 +1,7 @@
-import type { GameState, MusicInfo } from "./game";
+import type { MusicInfo } from "./game";
+import type { MessageType } from "./message";
 import type { User } from "./user";
 import type { PerformanceResultPayload } from "./room";
-export interface VoicePayload {
-    data: string;
-    mimeType: string;
-    streamId?: number;
-}
 
 export interface RtcSignalPayload {
     action: "offer" | "answer" | "candidate";
@@ -16,8 +12,8 @@ export interface RtcSignalPayload {
 }
 
 export interface SocketMessage {
-    type: GameState;
-    content: string | MusicInfo | User | PerformanceResultPayload | User[] | VoicePayload | RtcSignalPayload;
+    type: MessageType;
+    content: string | MusicInfo | User | PerformanceResultPayload | User[] | RtcSignalPayload;
     sender: string;
     roomId: string;
 }

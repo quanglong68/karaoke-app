@@ -26,16 +26,11 @@ public class Room {
     private Song currentSong;
 
     private Set<String> playedSongIds = ConcurrentHashMap.newKeySet();
-    // Thùng phiếu (Lưu ID -> Số lần bấm)
     private Map<String, Integer> buzzerCount = new ConcurrentHashMap<>();
-
-    //thùng phiếu cho giai đoạn vote, true là thích, false là không thích(hát dở)
     private Map<String, Boolean> votes = new ConcurrentHashMap<>();
-
-    // THÊM DÒNG NÀY: Cuốn sổ bạ (Lưu ID -> Tên người dùng)
     private Map<String, String> userNamesMap = new ConcurrentHashMap<>();
 
-    public void addUser(User user){
+    public void addUser(User user) {
         users.add(user);
     }
 

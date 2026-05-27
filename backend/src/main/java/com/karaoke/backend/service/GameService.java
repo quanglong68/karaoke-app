@@ -1,11 +1,16 @@
 package com.karaoke.backend.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.karaoke.backend.model.*;
 import org.apache.commons.text.similarity.LevenshteinDistance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
+
+import java.io.File;
+import java.io.IOException;
 import java.text.Normalizer;
 import java.util.*;
 import java.util.concurrent.Executors;
@@ -16,58 +21,58 @@ import java.util.concurrent.TimeUnit;
 public class GameService {
     private static final String SERVER_SENDER = "server";
     private static final int BUZZER_DURATION_SECONDS = 5;
+    private final int maxRounds;
     private static final int COUNTDOWN_DURATION_SECONDS = 3;
     private static final int PERFORMANCE_DURATION_MILLIS = 30000;
     private static final int NEXT_PHASE_DELAY_SECONDS = 3;
     private static final int END_GAME_DELAY_SECONDS = 5;
-    private final List<Song> songBank = List.of(
-            new Song("S01", "Ex Hate Me(Part 2)", "http://localhost:8080/videos/song1.mp4", 11.24, 31.23,
-                    "Cám ơn anh vì ngày tháng qua\n" +
-                            "Và cám ơn anh vì đã để chúng mình xa\n" +
-                            "Để rồi mới biết ra, ta vốn không thuộc về nhau\n" +
-                            "Chúc anh yêu được người tốt hơn\n" +
-                            "Và sẽ bên anh một quãng đường dài hơn",
-                    List.of(0.0, 349.23, 305.78, 349.23, 349.23, 351.25, 351.25, 351.25, 351.25, 392.0, 392.0, 425.01,
-                            0.0, 298.8, 331.54, 0.0, 297.08, 333.46, 229.08, 325.84, 0.0, 0.0, 322.1, 331.54, 389.74,
-                            432.44, 369.99, 374.29, 355.33, 347.22, 347.22, 355.33, 0.0, 351.25, 351.25, 329.63, 0.0,
-                            351.25, 248.37, 261.63, 295.37, 311.13, 349.23, 331.54, 327.73, 316.57, 329.63, 260.12,
-                            293.66, 285.3, 290.29, 234.43, 229.08, 227.76, 231.74, 233.08, 221.27, 0.0, 231.74, 231.74,
-                            0.0, 220.0, 220.0, 210.07, 0.0)),
-            new Song("S02", "Không buông", "http://localhost:8080/videos/song2.mp4", 11, 39,
-                    "Em cũng có nỗi niềm của riêng mình\n" +
-                            "Em xin lỗi đã bỏ anh một mình\n" +
-                            "Sau bao tháng năm ta cùng chung đường\n" +
-                            "Giờ hai đứa hai nơi\n" +
-                            "Đoạn cảm xúc tưởng như là lâu dài\n" +
-                            "Nhưng lại kết thúc bất ngờ vì hiểu lầm\n" +
-                            "Em trách sao lúc đó mình không vì nhau mà cố",
-                    List.of(0.0, 197.13, 194.87, 295.37, 331.54, 298.8, 290.29, 227.76, 222.56, 200.58, 197.13, 196.0,
-                            298.8, 327.73, 314.74, 295.37, 231.74, 220.0, 220.0, 220.0, 0.0, 0.0, 0.0, 226.45, 222.56,
-                            245.52, 264.67, 297.08, 280.4, 266.2, 261.63, 260.12, 222.56, 194.87, 194.87, 264.67,
-                            295.37, 280.4, 263.14, 263.14, 261.63, 246.94, 199.42, 220.0, 217.47, 217.47, 244.11, 196.0,
-                            186.07, 186.07, 193.75, 194.87, 194.87, 197.13, 196.0, 197.13, 196.0, 197.13, 204.09,
-                            198.28)),
-            new Song("S03", "Trú mưa nơi cầu vồng", "http://localhost:8080/videos/song3.mp4", 7.21, 25.28,
-                    "Hoá ra khi trưởng thành không cô độc như em đã nghĩ từ đầu\n" +
-                            "Khi em tìm được anh giống phép nhiệm màu\n" +
-                            "Như hai hành tinh cô đơn không cùng phương hướng\n" +
-                            "Bỗng ngã vào đời nhau, khi chẳng nơi nương náu",
-                    List.of(0.0, 351.25, 392.0, 311.13, 309.34, 312.93, 312.93, 312.93, 314.74, 312.93, 359.46, 349.23,
-                            392.0, 385.26, 394.27, 312.93, 311.13, 311.13, 309.34, 291.97, 309.34, 0.0, 212.51, 231.74,
-                            238.53, 261.63, 210.07, 235.79, 295.37, 311.13, 314.74, 314.74, 261.63, 0.0, 257.13, 314.74,
-                            316.57, 314.74, 312.93, 312.93, 337.33, 351.25)),
-            new Song("S04", "Trú mưa nơi cầu vồng 2", "http://localhost:8080/videos/song4.mp4", 8.2, 25.24,
-                    "Sẽ là rất tuyệt\n" +
-                            "Khi ta nghe cùng playlist\n" +
-                            "Chẳng cần nói nhiều\n" +
-                            "Thuộc lòng từng suy nghĩ nhau\n" +
-                            "Nói nhiều điều thật lòng\n" +
-                            "Không muốn cứ mập mờ lòng vòng\n" +
-                            "Như những người mới lớn trưởng thành cùng nhau",
-                    List.of(0.0, 440.0, 316.57, 305.78, 320.24, 312.93, 0.0, 312.93, 311.13, 0.0, 347.22, 392.0, 353.29,
-                            359.46, 318.4, 318.4, 311.13, 311.13, 314.74, 314.74, 307.55, 0.0, 230.4, 231.74, 263.14,
-                            226.45, 220.0, 280.4, 309.34, 0.0, 312.93, 266.2, 269.29, 261.63, 309.34, 0.0, 312.93,
-                            312.93, 0.0, 312.93, 347.22, 349.23, 349.23, 349.23)));
+    private List<Song> songBank = new ArrayList<>();
+    private final String DB_FILE_PATH = "data/songs.json";
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    // SỬA LẠI CONSTRUCTOR NHƯ SAU:
+    @Autowired // Có thể có hoặc không, Spring đời mới tự hiểu
+    public GameService(RoomService roomService, SimpMessagingTemplate messagingTemplate) {
+        this.roomService = roomService;
+        this.messagingTemplate = messagingTemplate;
+
+        // Vẫn gọi hàm nạp dữ liệu như bình thường
+        loadSongsFromDatabase();
+        maxRounds =  Math.min(10, songBank.size());
+    }
+
+    private void loadSongsFromDatabase() {
+        try {
+            File file = new File(DB_FILE_PATH);
+            if (file.exists()) {
+                songBank = objectMapper.readValue(file, new TypeReference<List<Song>>() {});
+                System.out.println("✅ Đã load " + songBank.size() + " bài hát từ songs.json");
+            } else {
+                file.getParentFile().mkdirs();
+                file.createNewFile();
+                saveSongsToDatabase();
+            }
+        } catch (IOException e) {
+            System.err.println("❌ Lỗi đọc Database: " + e.getMessage());
+        }
+    }
+
+    private void saveSongsToDatabase() {
+        try {
+            objectMapper.writeValue(new File(DB_FILE_PATH), songBank);
+        } catch (IOException e) {
+            System.err.println("❌ Lỗi ghi Database: " + e.getMessage());
+        }
+    }
+
+    public Song addNewSong(String title, String videoUrl, double duration, String lyrics, List<Double> pitch) {
+        String newId = "S" + String.format("%03d", songBank.size() + 1);
+        Song newSong = new Song(newId, title, videoUrl, duration, duration, lyrics, pitch);
+
+        songBank.add(newSong);
+        saveSongsToDatabase();
+        return newSong;
+    }
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
     private final RoomService roomService;
     private final SimpMessagingTemplate messagingTemplate;
@@ -81,9 +86,6 @@ public class GameService {
             case BATTLE:
                 handleUserClick(roomId, message.getSender());
                 break;
-            case VOICE:
-                broadcast(roomId, message);
-                break;
             case RTC_SIGNAL:
                 broadcast(roomId, message);
                 break;
@@ -92,14 +94,35 @@ public class GameService {
                 if (joinRoom == null) {
                     return;
                 }
-                broadcastState(roomId, GameState.JOIN, joinRoom.getUsers());
-                lobbyPhase(roomId);
+                broadcastMessage(roomId, MessageType.JOIN, joinRoom.getUsers());
+                if (joinRoom.getGameState() == GameState.LOBBY) {
+                    lobbyPhase(roomId);
+                }
                 break;
             case KICK_PLAYER:
                 handleUserKick(roomId, message.getSender(), message.getContent().toString());
                 break;
             case TOGGLE_READY:
                 handleToggleReady(roomId, message.getSender());
+                break;
+            case LEAVE:
+                roomService.leaveRoom(roomId, message.getSender());
+                Room leftRoom = roomService.getRoom(roomId);
+                if (leftRoom != null) {
+                    broadcastMessage(roomId, MessageType.JOIN, leftRoom.getUsers());
+                }
+                break;
+            case RENAME:
+                Object content = message.getContent();
+                if (content instanceof Map) {
+                    Object nameObj = ((Map<?, ?>) content).get("userName");
+                    if (nameObj instanceof String) {
+                        Room renamedRoom = roomService.renameUser(roomId, message.getSender(), (String) nameObj);
+                        if (renamedRoom != null) {
+                            broadcastMessage(roomId, MessageType.JOIN, renamedRoom.getUsers());
+                        }
+                    }
+                }
                 break;
             case USER_LYRICS:
                 Room lyricsRoom = roomService.getRoom(roomId);
@@ -108,13 +131,8 @@ public class GameService {
                     return;
                 }
                 try {
-                    // Dịch gói JSON từ Frontend thành Map
                     Map<String, Object> contentMap = (Map<String, Object>) message.getContent();
-
-                    // 1. Lấy Lời bài hát
                     String userLyrics = (String) contentMap.get("lyrics");
-
-                    // 2. Lấy Mảng tần số Tone
                     List<Double> userPitchContour = new ArrayList<>();
                     Object pitchObj = contentMap.get("pitchContour");
 
@@ -126,12 +144,11 @@ public class GameService {
                         }
                     }
 
-                    // Nộp cả 2 thứ cho AI chấm điểm
                     evaluatePerformance(roomId, userLyrics, userPitchContour);
 
                 } catch (Exception e) {
                     System.out.println("Lỗi khi đọc kết quả biểu diễn: " + e.getMessage());
-                    evaluatePerformance(roomId, " ", List.of()); // Fallback chống sập
+                    evaluatePerformance(roomId, " ", List.of());
                 }
                 break;
             case PERFORMANCE_EVALUATION:
@@ -146,7 +163,6 @@ public class GameService {
         }
     }
 
-    // 1. BỘ PHÂN TÍCH GIỌNG HÁT: Lọc nhiễu, Tính Tông trung bình và Độ luyến láy
     private double[] analyzePitch(List<Double> pitches) {
         List<Double> notes = new ArrayList<>();
         for (Double hz : pitches) {
@@ -157,37 +173,27 @@ public class GameService {
         if (notes.size() < 2)
             return new double[] { 0.0, 0.0 };
 
-        // 👉 MÁY CẮT RÁC: Xóa 5% cao nhất và 5% thấp nhất để chống nhiễu micro (glitch)
         Collections.sort(notes);
         int trim = (int) (notes.size() * 0.05);
         List<Double> cleanNotes = notes.subList(trim, notes.size() - trim);
         if (cleanNotes.isEmpty())
-            cleanNotes = notes; // Fallback
-
-        // Tính Tông trung bình (Mean)
+            cleanNotes = notes;
         double sum = 0;
         for (double note : cleanNotes)
             sum += note;
         double mean = sum / cleanNotes.size();
-
-        // Tính Độ luyến láy (Variance)
         double varianceSum = 0;
         for (double note : cleanNotes)
             varianceSum += Math.pow(note - mean, 2);
         double variance = Math.sqrt(varianceSum / cleanNotes.size());
-
-        // Trả về [Tông trung bình, Độ luyến láy]
         return new double[] { mean, variance };
     }
 
-    // 2. THUẬT TOÁN DTW (Ver 6 - CHUYÊN NGHIỆP): Dịch tông tự động + Ép chết hát
-    // ngang
     private double calculateToneScore(List<Double> userPitch, List<Double> originalPitch) {
         if (userPitch == null || userPitch.isEmpty() || originalPitch == null || originalPitch.isEmpty()) {
             return 0.0;
         }
 
-        // 1. Phân tích dữ liệu 2 bên
         double[] userStats = analyzePitch(userPitch);
         double[] origStats = analyzePitch(originalPitch);
 
@@ -196,10 +202,7 @@ public class GameService {
         double userVar = userStats[1];
         double origVar = origStats[1];
 
-        // 👉 DỊCH TÔNG: Khoảng cách giữa Tông gốc và Tông của người hát
         double keyShift = origMean - userMean;
-
-        // 2. Thiết lập Ma trận DTW
         int n = userPitch.size();
         int m = originalPitch.size();
         double[][] dtw = new double[n + 1][m + 1];
@@ -219,13 +222,9 @@ public class GameService {
                     double userNote = 12 * (Math.log(userHz / 440.0) / Math.log(2));
                     double originalNote = 12 * (Math.log(originalHz / 440.0) / Math.log(2));
 
-                    // DỊCH GIAI ĐIỆU CỦA NGƯỜI CHƠI LÊN BẰNG VỚI CA SĨ
                     userNote += keyShift;
-
-                    // So sánh sự chênh lệch trực tiếp (Không dùng % 12 nữa)
                     cost = Math.abs(userNote - originalNote);
                 } else if (userHz > 0 || originalHz > 0) {
-                    // Phạt tội hát sai nhịp hoặc im lặng
                     cost = 5;
                 }
 
@@ -240,13 +239,15 @@ public class GameService {
         double totalDistance = dtw[n][m];
         double averageDeviation = totalDistance / Math.max(n, m);
 
-        // 3. Tính điểm (Trừ 12 điểm cho mỗi 1 nốt chênh lệch)
         double score = Math.max(0, 100 - (averageDeviation * 12));
-
-        // 👉 ÁN TỬ HÌNH CHO HÁT NGANG:
         if (origVar > 1.2 && userVar < 0.6) {
             System.out.println("🚨 [RADAR] ÁN TỬ HÌNH: PHÁT HIỆN HÁT NGANG! User Var: " + userVar);
-            score = 0.0; // Đánh rớt 100%, không cho gỡ điểm!
+            score = 0.0;
+        }
+
+        if(score < 70)
+        {
+            score = 0;
         }
 
         return score;
@@ -281,16 +282,9 @@ public class GameService {
         Room room = roomService.getRoom(roomId);
         Song currentSong = room.getCurrentSong();
 
-        // 1. Chấm điểm Lời (Thuật toán Levenshtein cũ của bạn) -> max 100đ
         double lyricsScore = calculateLyricsScore(userLyrics, currentSong.getOriginalLyrics());
-
-        // 2. Chấm điểm Tone (Thuật toán DTW ở trên) -> max 100đ
         double toneScore = calculateToneScore(userPitchContour, currentSong.getOriginalPitchContour());
-
-        // 3. Tính điểm tổng hợp (Tỉ lệ vàng: 40% Lời, 60% Tone)
         double finalScore = (lyricsScore * 0.4) + (toneScore * 0.6);
-
-        // 4. Quyết định Pass/Fail
         boolean isSuccess = finalScore >= 70.0;
 
         System.out.println("====== KẾT QUẢ CHẤM ĐIỂM ======");
@@ -301,13 +295,10 @@ public class GameService {
         System.out.println("🔥 ĐIỂM TỔNG CỘNG: " + finalScore + " / 100");
         System.out.println("Kết quả: " + (isSuccess ? "PASS" : "FAIL"));
 
-        // 1. Xác định kết quả
         User performanceUser = room.getCurrentPerformanceUser();
         if (isSuccess) {
             performanceUser.setScore(performanceUser.getScore() + 1);
         }
-
-        // 3. Đóng gói Dữ liệu & Gửi xuống Frontend
         Map<String, Object> payload = new HashMap<>();
         payload.put("user", performanceUser);
         payload.put("isSuccess", isSuccess);
@@ -315,7 +306,7 @@ public class GameService {
         room.setGameState(GameState.SCORE_SHOW);
         broadcastState(roomId, GameState.SCORE_SHOW, payload);
 
-        if (room.getCurrentRound() < 3) {
+        if (room.getCurrentRound() < maxRounds) {
             scheduler.schedule(() -> startGame(roomId), NEXT_PHASE_DELAY_SECONDS, TimeUnit.SECONDS);
         } else {
             scheduler.schedule(() -> startEndGamePhase(roomId), NEXT_PHASE_DELAY_SECONDS, TimeUnit.SECONDS);
@@ -342,10 +333,6 @@ public class GameService {
         return text;
     }
 
-    public GameService(RoomService roomService, SimpMessagingTemplate messagingTemplate) {
-        this.roomService = roomService;
-        this.messagingTemplate = messagingTemplate;
-    }
 
     public void handleToggleReady(String roomId, String userId) {
         Room room = roomService.getRoom(roomId);
@@ -368,7 +355,7 @@ public class GameService {
             return;
         }
         room.getUsers().removeIf(user -> user.getUserId().equals(kickedPlayer));
-        broadcast(roomId, new SocketMessage(GameState.KICK_PLAYER, kickedPlayer, hostId, roomId));
+        broadcast(roomId, new SocketMessage(MessageType.KICK_PLAYER, kickedPlayer, hostId, roomId));
         lobbyPhase(roomId);
     }
 
@@ -398,8 +385,15 @@ public class GameService {
         Map<String, Integer> buzzerCount = room.getBuzzerCount();
         System.out.println("LOG SERVER - HẾT 5 GIÂY! Mở thùng phiếu ra kiểm tra: " + buzzerCount);
         if (buzzerCount.isEmpty()) {
-            room.setGameState(GameState.LOBBY); // Trả về trạng thái chờ
-            broadcastState(roomId, GameState.LOBBY, "Không ai giành mic");
+            room.setCurrentPerformanceUser(null);
+            broadcastMessage(roomId, MessageType.NO_WINNER, "Không ai giành mic");
+            buzzerCount.clear();
+            if (room.getCurrentRound() >= maxRounds) {
+                scheduler.schedule(() -> startCountdownPhase(roomId, () -> startEndGamePhase(roomId)), 1,
+                        TimeUnit.SECONDS);
+            } else {
+                scheduler.schedule(() -> startCountdownPhase(roomId, () -> startGame(roomId)), 1, TimeUnit.SECONDS);
+            }
             return;
         }
         String highestScoreUserId = "Chưa rõ";
@@ -421,14 +415,15 @@ public class GameService {
         room.setGameState(GameState.WINNER_SHOW);
         broadcastState(roomId, GameState.WINNER_SHOW, room.getUserById(highestScoreUserId));
         buzzerCount.clear();
-        scheduler.schedule(() -> startCountdownPhase(roomId), COUNTDOWN_DURATION_SECONDS, TimeUnit.SECONDS);
+        scheduler.schedule(() -> startCountdownPhase(roomId, () -> startPerformancePhase(roomId)),
+                COUNTDOWN_DURATION_SECONDS, TimeUnit.SECONDS);
     }
 
-    public void startCountdownPhase(String roomId) {
+    public void startCountdownPhase(String roomId, Runnable nextStep) {
         Room room = roomService.getRoom(roomId);
         room.setGameState(GameState.COUNTDOWN);
         broadcastState(roomId, GameState.COUNTDOWN, "");
-        scheduler.schedule(() -> startPerformancePhase(roomId), COUNTDOWN_DURATION_SECONDS, TimeUnit.SECONDS);
+        scheduler.schedule(nextStep, COUNTDOWN_DURATION_SECONDS, TimeUnit.SECONDS);
     }
 
     public void startPerformancePhase(String roomId) {
@@ -438,7 +433,7 @@ public class GameService {
         broadcastState(roomId, GameState.PERFORMANCE, currentSong.getOriginalLyrics());
         var timer = scheduler.schedule(() -> {
             startAIEvaluatePhase(roomId);
-            performanceTimers.remove(roomId); // Nổ xong thì xóa đi
+            performanceTimers.remove(roomId);
         }, PERFORMANCE_DURATION_MILLIS, TimeUnit.MILLISECONDS);
         performanceTimers.put(roomId, timer);
     }
@@ -452,7 +447,7 @@ public class GameService {
     private void cancelPerformanceTimer(String roomId) {
         var timer = performanceTimers.get(roomId);
         if (timer != null) {
-            timer.cancel(false); // Hủy lịch hẹn
+            timer.cancel(false);
             performanceTimers.remove(roomId);
         }
     }
@@ -489,7 +484,11 @@ public class GameService {
     }
 
     private void broadcastState(String roomId, GameState state, Object content) {
-        broadcast(roomId, new SocketMessage(state, content, SERVER_SENDER, roomId));
+        broadcastMessage(roomId, MessageType.valueOf(state.name()), content);
+    }
+
+    private void broadcastMessage(String roomId, MessageType type, Object content) {
+        broadcast(roomId, new SocketMessage(type, content, SERVER_SENDER, roomId));
     }
 
     private Song pickRandomSong(Room room) {
