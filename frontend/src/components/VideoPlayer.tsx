@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from "react";
+import { API_BASE_URL } from "../constants/api";
 
 interface VideoPlayerProps {
     videoUrl: string;
@@ -10,6 +11,20 @@ interface VideoPlayerProps {
 
 export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverStartTime, muted = false }: VideoPlayerProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
+    const resolvedVideoUrl = (() => {
+        if (!videoUrl) return "";
+
+        if (videoUrl.startsWith("http://localhost:8080") || videoUrl.startsWith("https://localhost:8080")
+            || videoUrl.startsWith("http://127.0.0.1:8080") || videoUrl.startsWith("https://127.0.0.1:8080")) {
+            return videoUrl.replace(/^https?:\/\/(?:localhost|127\.0\.0\.1):8080/, API_BASE_URL);
+        }
+
+        if (videoUrl.startsWith("/")) {
+            return `${API_BASE_URL}${videoUrl}`;
+        }
+
+        return videoUrl;
+    })();
 
     useEffect(() => {
         const video = videoRef.current;
@@ -17,7 +32,7 @@ export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverS
 
         video.muted = muted;
 
-        if (isPlaying && videoUrl) {
+        if (isPlaying && resolvedVideoUrl) {
             const now = Date.now();
             const expectedVideoTime = startSeconds + ((now - serverStartTime) / 1000);
 
@@ -37,9 +52,9 @@ export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverS
         } else {
             video.pause();
         }
-    }, [isPlaying, serverStartTime, startSeconds, videoUrl, muted]);
+    }, [isPlaying, serverStartTime, startSeconds, resolvedVideoUrl, muted]);
 
-    if (!videoUrl) {
+    if (!resolvedVideoUrl) {
         return (
             <div style={{
                 width: '100%', height: '100%', background: '#000',
@@ -55,7 +70,7 @@ export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverS
         <div style={{ position: 'relative', width: '100%', height: '100%', background: '#000', borderRadius: '8px', overflow: 'hidden' }}>
             <video
                 ref={videoRef}
-                src={videoUrl}
+                src={resolvedVideoUrl}
                 width="100%"
                 height="100%"
                 style={{ objectFit: 'cover' }}
