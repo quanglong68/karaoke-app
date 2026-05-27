@@ -9,6 +9,7 @@ import type { User } from "../types/user";
 import type { PerformanceResultPayload } from "../types/room";
 import { storage } from "../utils/storage";
 import { roomService } from "../services/roomService";
+import { API_BASE_URL } from "../constants/api";
 import GameHeader from "../components/game/GameHeader";
 import GameRoot from "../components/game/GameRoot";
 import GameMain from "../components/game/GameMain";
@@ -20,6 +21,27 @@ import GameControls from "../components/game/GameControls";
 import Toast from "../components/ui/Toast";
 
 export default function GamePage() {
+    type SpeechRecognitionEventLike = {
+        results: Array<Array<{ transcript: string }>>;
+    };
+
+    type SpeechRecognitionErrorEventLike = {
+        error?: string;
+    };
+
+    type SpeechRecognitionLike = {
+        continuous: boolean;
+        interimResults: boolean;
+        lang: string;
+        onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+        onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+        onend: (() => void) | null;
+        start: () => void;
+        stop: () => void;
+    };
+
+    type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
     const maxPlayers = 5;
     const { roomId } = useParams();
     const [messages, setMessages] = useState<SocketMessage[]>([]);
@@ -32,7 +54,7 @@ export default function GamePage() {
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const pitchContourRef = useRef<number[]>([]);
-    const pitchIntervalRef = useRef<any>(null);
+    const pitchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const [gameState, setGameState] = useState<GameState>("LOBBY");
     const [clickCount, setClickCount] = useState(0);
@@ -53,7 +75,7 @@ export default function GamePage() {
     const [micPermissionAsked, setMicPermissionAsked] = useState(false);
 
     const fullTranscriptRef = useRef("");
-    const speechRecognitionRef = useRef<any>(null);
+    const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
     const currentSongLyricsRef = useRef("");
 
@@ -102,7 +124,7 @@ export default function GamePage() {
             fullTranscriptRef.current = "";
             pitchContourRef.current = [];
 
-            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            const AudioContextClass = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
             if (AudioContextClass && localStreamRef.current) {
                 audioContextRef.current = new AudioContextClass();
                 analyserRef.current = audioContextRef.current.createAnalyser();
@@ -125,7 +147,8 @@ export default function GamePage() {
                 }, 200);
             }
 
-            const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+            const SpeechRecognition = (window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor }).SpeechRecognition
+                || (window as Window & { webkitSpeechRecognition?: SpeechRecognitionConstructor }).webkitSpeechRecognition;
             if (SpeechRecognition) {
                 const recognition = new SpeechRecognition();
                 speechRecognitionRef.current = recognition;
@@ -134,7 +157,7 @@ export default function GamePage() {
                 recognition.interimResults = true;
                 recognition.lang = 'vi-VN';
 
-                recognition.onresult = (event: any) => {
+                recognition.onresult = (event) => {
                     let textBlock = '';
                     for (let i = 0; i < event.results.length; i++) {
                         textBlock += event.results[i][0].transcript + ' ';
@@ -142,7 +165,7 @@ export default function GamePage() {
                     fullTranscriptRef.current = textBlock;
                 };
 
-                recognition.onerror = (event: any) => {
+                recognition.onerror = (event) => {
                     console.error("🚨 Lỗi cỗ máy AI:", event.error);
                 };
 
@@ -150,7 +173,9 @@ export default function GamePage() {
                     if (speechRecognitionRef.current) {
                         try {
                             speechRecognitionRef.current.start();
-                        } catch (err) { }
+                        } catch (error) {
+                            console.error("🚨 Lỗi khi bắt đầu nhận diện giọng nói:", error);
+                        }
                     }
                 };
 
@@ -310,7 +335,6 @@ export default function GamePage() {
                 audio = new Audio();
                 audio.autoplay = true;
                 audio.preload = "auto";
-                audio.playsInline = true;
                 remoteAudioRef.current[peerId] = audio;
             }
             if (audio.srcObject !== stream) {
@@ -343,7 +367,7 @@ export default function GamePage() {
 
     const isForcedVoice = gameState === "PERFORMANCE" && winnerUser?.userId === userId;
     const isMusicPlaying = gameState === "PLAY_SEGMENT";
-    const isOtherPerformance = gameState === "PERFORMANCE" && winnerUser?.userId && winnerUser.userId !== userId;
+    const isOtherPerformance = gameState === "PERFORMANCE" && !!winnerUser?.userId && winnerUser.userId !== userId;
     const shouldStreamVoice = voiceEnabled || isForcedVoice;
 
     useEffect(() => {
@@ -410,8 +434,9 @@ export default function GamePage() {
             })
             .catch((error) => {
                 if (!active) return;
-                const status = (error as any)?.response?.status;
-                const reason = (error as any)?.response?.data?.message;
+                const err = error as { response?: { status?: number; data?: { message?: string } } };
+                const status = err.response?.status;
+                const reason = err.response?.data?.message;
                 if (status === 404) {
                     showToast("error", "Không tìm thấy phòng.");
                 } else if (status === 409 && reason === "ROOM_FULL") {
@@ -566,12 +591,17 @@ export default function GamePage() {
                 }
                 if (roomId && userId) {
                     const data = new URLSearchParams({ roomId, userId });
-                    fetch("http://localhost:8080/api/rooms/leave", {
-                        method: "POST",
-                        body: data,
-                        keepalive: true,
-                        headers: { "Content-Type": "application/x-www-form-urlencoded" }
-                    }).catch(() => undefined);
+                    const leaveUrl = `${API_BASE_URL}/api/rooms/leave`;
+                    if (navigator.sendBeacon) {
+                        navigator.sendBeacon(leaveUrl, data);
+                    } else {
+                        fetch(leaveUrl, {
+                            method: "POST",
+                            body: data,
+                            keepalive: true,
+                            headers: { "Content-Type": "application/x-www-form-urlencoded" }
+                        }).catch(() => undefined);
+                    }
                 }
                 websocketService.disconnect();
                 Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
@@ -668,8 +698,6 @@ export default function GamePage() {
     };
 
     const sortedPlayers = [...playerList].sort((a, b) => b.score - a.score);
-    const bestScore = sortedPlayers.length ? sortedPlayers[0].score : 0;
-    const winners = sortedPlayers.filter((user) => user.score === bestScore);
     let currentRank = 1;
     const rankedPlayers: RankedUser[] = sortedPlayers.map((user, index) => {
         if (index > 0 && user.score < sortedPlayers[index - 1].score) {
@@ -727,7 +755,6 @@ export default function GamePage() {
                             countdownNum={countdownNum}
                             notification={notification}
                             noWinnerMessage={noWinnerMessage}
-                            winners={winners}
                             rankedPlayers={rankedPlayers}
                         />
                     }
@@ -894,13 +921,14 @@ function autoCorrelate(buf: Float32Array, sampleRate: number) {
     let SIZE = buf.length;
     let rms = 0;
     for (let i = 0; i < SIZE; i++) {
-        let val = buf[i];
+        const val = buf[i];
         rms += val * val;
     }
     rms = Math.sqrt(rms / SIZE);
     if (rms < 0.01) return -1;
 
-    let r1 = 0, r2 = SIZE - 1, thres = 0.2;
+    let r1 = 0, r2 = SIZE - 1;
+    const thres = 0.2;
     for (let i = 0; i < SIZE / 2; i++)
         if (Math.abs(buf[i]) < thres) { r1 = i; break; }
     for (let i = 1; i < SIZE / 2; i++)
@@ -909,7 +937,7 @@ function autoCorrelate(buf: Float32Array, sampleRate: number) {
     buf = buf.slice(r1, r2);
     SIZE = buf.length;
 
-    let c = new Array(SIZE).fill(0);
+    const c: number[] = new Array(SIZE).fill(0);
     for (let i = 0; i < SIZE; i++)
         for (let j = 0; j < SIZE - i; j++)
             c[i] = c[i] + buf[j] * buf[j + i];
@@ -923,9 +951,11 @@ function autoCorrelate(buf: Float32Array, sampleRate: number) {
         }
     }
     let T0 = maxpos;
-    let x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
-    let a = (x1 + x3 - 2 * x2) / 2;
-    let b = (x3 - x1) / 2;
+    const x1 = c[T0 - 1];
+    const x2 = c[T0];
+    const x3 = c[T0 + 1];
+    const a = (x1 + x3 - 2 * x2) / 2;
+    const b = (x3 - x1) / 2;
     if (a) T0 = T0 - b / (2 * a);
 
     return sampleRate / T0;

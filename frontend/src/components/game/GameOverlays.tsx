@@ -11,7 +11,6 @@ interface GameOverlaysProps {
     countdownNum: number;
     notification: string | null;
     noWinnerMessage: string | null;
-    winners: User[];
     rankedPlayers: RankedUser[];
 }
 
@@ -24,14 +23,13 @@ export default function GameOverlays({
     countdownNum,
     notification,
     noWinnerMessage,
-    winners,
     rankedPlayers,
 }: GameOverlaysProps) {
     const topRanks = (() => {
         const entries: Array<{ user: RankedUser; rank: number }> = [];
         let rank = 1;
         let prevScore: number | null = null;
-        rankedPlayers.forEach((player, index) => {
+        rankedPlayers.forEach((player) => {
             if (prevScore !== null && player.score < prevScore) {
                 rank += 1;
             }

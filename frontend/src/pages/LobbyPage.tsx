@@ -30,6 +30,7 @@ export default function LobbyPage() {
                 const data = await roomService.listRooms();
                 if (active) setRooms(data);
             } catch (error) {
+                console.error("Failed to fetch rooms", error);
                 if (active) setRooms([]);
             }
         };
@@ -85,8 +86,9 @@ export default function LobbyPage() {
             storage.setRoomJoinToken(data.room.roomId);
             navigate(`/room/${data.room.roomId}`);
         } catch (error) {
-            const status = (error as any)?.response?.status;
-            const reason = (error as any)?.response?.data?.message;
+            const err = error as { response?: { status?: number; data?: { message?: string } } };
+            const status = err.response?.status;
+            const reason = err.response?.data?.message;
             if (status === 404) {
                 showToast("error", "Không tìm thấy phòng. Vui lòng kiểm tra lại ID.");
                 return;

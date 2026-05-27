@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 
 interface GameHeaderProps {
     myScore: number;
@@ -35,7 +34,7 @@ export default function GameHeader({
     onLeaveRoom,
     onRename,
 }: GameHeaderProps) {
-    let title: ReactNode = undefined;
+    let title: string | undefined = undefined;
     if (isMusicPlaying) {
         title = "Đang phát nhạc, không thể mở mic";
     } else if (isOtherPerformance) {
