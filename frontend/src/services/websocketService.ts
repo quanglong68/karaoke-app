@@ -11,7 +11,7 @@ interface StompFrame {
 let stompClient: Stomp.Client | null = null;
 
 export const websocketService = {
-    connect: (roomId: string, onMessageReceived: (message: SocketMessage) => void) => {
+    connect: (roomId: string, userId: string, onMessageReceived: (message: SocketMessage) => void) => {
         const socket = new SockJS(WS_ENDPOINT);
 
         stompClient = Stomp.over(socket);
@@ -19,7 +19,7 @@ export const websocketService = {
         stompClient.debug = () => { };
 
         stompClient.connect(
-            {},
+            { roomId, userId },
             () => {
                 console.log("Đã kết nối WebSocket thành công!");
                 stompClient?.subscribe(`/topic/room/${roomId}`, (payload: StompFrame) => {

@@ -1,22 +1,13 @@
-export type GameState = 
-    | "JOIN" 
-    | "LOBBY" 
-    | "PLAY_SEGMENT" 
-    | "BATTLE" 
-    | "PERFORMANCE" 
-    | "VOTE" 
-    | "CHAT" 
-    | "PAUSE"
+export type GameState =
+    | "LOBBY"
+    | "PLAY_SEGMENT"
+    | "BATTLE"
+    | "PERFORMANCE"
+    | "PERFORMANCE_EVALUATION"
     | "WINNER_SHOW"
     | "COUNTDOWN"
-    | "VOICE"
-    | "RTC_SIGNAL"
     | "SCORE_SHOW"
-    | "END_GAME"
-    | "KICK_PLAYER"
-    | "TOGGLE_READY"
-    | "USER_LYRICS"
-    | "PERFORMANCE_EVALUATION";
+    | "END_GAME";
 export interface MusicInfo {
     videoUrl: string;
     startSeconds: number;
