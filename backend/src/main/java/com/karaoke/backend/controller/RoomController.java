@@ -13,7 +13,6 @@ import java.util.Collection;
 
 @RestController
 @RequestMapping("/api/rooms")
-@CrossOrigin(origins = "*")
 public class RoomController {
     @Autowired
     private RoomService roomService;
