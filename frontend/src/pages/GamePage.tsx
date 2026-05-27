@@ -49,7 +49,7 @@ export default function GamePage() {
     const [userName, setUserName] = useState(() => storage.getUserName() || "Người chơi ẩn danh");
     const userId = storage.getUserId();
     const roomName = storage.getRoomName();
-    const [perfCountdown, setPerfCountdown] = useState(30);
+    const [perfCountdown, setPerfCountdown] = useState(60);
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
@@ -109,7 +109,7 @@ export default function GamePage() {
 
     useEffect(() => {
         if (gameState === "PERFORMANCE") {
-            setPerfCountdown(30);
+            setPerfCountdown(60);
             const timer = setInterval(() => {
                 setPerfCountdown((prev) => (prev > 0 ? prev - 1 : 0));
             }, 1000);
