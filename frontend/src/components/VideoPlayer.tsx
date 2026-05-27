@@ -31,18 +31,34 @@ export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverS
         if (!video) return;
 
         video.muted = muted;
+        video.preload = "auto";
+
+        if (resolvedVideoUrl) {
+            video.load();
+        }
 
         if (isPlaying && resolvedVideoUrl) {
-            const now = Date.now();
-            const expectedVideoTime = startSeconds + ((now - serverStartTime) / 1000);
+            const startPlayback = () => {
+                const now = Date.now();
+                const expectedVideoTime = startSeconds + ((now - serverStartTime) / 1000);
 
-            video.currentTime = expectedVideoTime;
-            video.play().catch(e => console.error("Trình duyệt chặn autoplay:", e));
+                if (Number.isFinite(expectedVideoTime) && expectedVideoTime >= 0) {
+                    video.currentTime = expectedVideoTime;
+                }
+
+                video.play().catch(e => console.error("Trình duyệt chặn autoplay:", e));
+            };
+
+            if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+                startPlayback();
+            } else {
+                video.addEventListener("canplay", startPlayback, { once: true });
+            }
 
             const syncInterval = setInterval(() => {
                 const currentExpectedTime = startSeconds + ((Date.now() - serverStartTime) / 1000);
 
-                if (Math.abs(video.currentTime - currentExpectedTime) > 0.5) {
+                if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && Math.abs(video.currentTime - currentExpectedTime) > 0.5) {
                     console.log(`Đồng bộ lại video! Lệch: ${video.currentTime - currentExpectedTime}s`);
                     video.currentTime = currentExpectedTime;
                 }
