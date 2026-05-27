@@ -25,7 +25,7 @@ export default function PerformancePanel({ perfCountdown, lyrics, isSinger, onFi
 
                 <div style={{ width: "80%", height: "12px", backgroundColor: "#2f3542", borderRadius: "6px", margin: "0 auto", overflow: "hidden", border: "1px solid #747d8c" }}>
                     <div style={{
-                        width: `${(perfCountdown / 30) * 100}%`,
+                        width: `${(perfCountdown / 60) * 100}%`,
                         height: "100%",
                         background: "linear-gradient(90deg, #00f5d4, #ff7a59)",
                         transition: "width 1s linear",
