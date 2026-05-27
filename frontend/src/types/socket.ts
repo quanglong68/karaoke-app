@@ -11,9 +11,18 @@ export interface RtcSignalPayload {
     candidate?: RTCIceCandidateInit;
 }
 
+export interface UserLyricsPayload {
+    lyrics: string;
+    pitchContour: number[];
+}
+
+export interface RenamePayload {
+    userName: string;
+}
+
 export interface SocketMessage {
     type: MessageType;
-    content: string | MusicInfo | User | PerformanceResultPayload | User[] | RtcSignalPayload;
+    content: string | MusicInfo | User | PerformanceResultPayload | User[] | RtcSignalPayload | UserLyricsPayload | RenamePayload;
     sender: string;
     roomId: string;
 }

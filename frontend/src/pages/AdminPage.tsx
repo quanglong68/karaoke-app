@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { API_BASE_URL } from "../constants/api";
 
 const AdminPage: React.FC = () => {
     const [title, setTitle] = useState('');
@@ -40,7 +41,7 @@ const AdminPage: React.FC = () => {
         formData.append("duration", duration.toString());
 
         try {
-            const response = await fetch("http://localhost:8080/api/admin/upload-song", {
+            const response = await fetch(`${API_BASE_URL}/api/admin/upload-song`, {
                 method: "POST",
                 body: formData,
             });

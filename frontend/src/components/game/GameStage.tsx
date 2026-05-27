@@ -23,7 +23,6 @@ interface GameStageProps {
     countdownNum: number;
     notification: string | null;
     noWinnerMessage: string | null;
-    winners: User[];
     rankedPlayers: RankedUser[];
 }
 
@@ -44,7 +43,6 @@ export default function GameStage({
     countdownNum,
     notification,
     noWinnerMessage,
-    winners,
     rankedPlayers,
 }: GameStageProps) {
     return (
@@ -69,7 +67,6 @@ export default function GameStage({
                 countdownNum={countdownNum}
                 notification={notification}
                 noWinnerMessage={noWinnerMessage}
-                winners={winners}
                 rankedPlayers={rankedPlayers}
             />
         </StageFrame>
