@@ -9,6 +9,7 @@ export default function VideoStage({ musicInfo }: VideoStageProps) {
     return (
         <VideoPlayer
             videoUrl={musicInfo.videoUrl}
+            nextVideoUrl={musicInfo.nextVideoUrl ?? null}
             startSeconds={musicInfo.startSeconds}
             isPlaying={musicInfo.isPlaying}
             serverStartTime={musicInfo.serverStartTime}

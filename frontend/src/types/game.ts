@@ -13,4 +13,7 @@ export interface MusicInfo {
     startSeconds: number;
     serverStartTime: number;
     isPlaying: boolean;
+    nextVideoUrl?: string | null;
+    songId?: string | null;
+    nextSongId?: string | null;
 }
