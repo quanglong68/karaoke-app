@@ -18,6 +18,7 @@ public class Room {
 
     private String currentVideoId;
     private User currentPerformanceUser;
+    private Song upcomingSong;
 
     private int currentRound = 0;
 

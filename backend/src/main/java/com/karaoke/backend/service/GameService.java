@@ -8,7 +8,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
-
 import java.io.File;
 import java.io.IOException;
 import java.text.Normalizer;
@@ -23,7 +22,7 @@ public class GameService {
     private static final int BUZZER_DURATION_SECONDS = 5;
     private final int maxRounds;
     private static final int COUNTDOWN_DURATION_SECONDS = 3;
-    private static final int PERFORMANCE_DURATION_MILLIS = 30000;
+    private static final int PERFORMANCE_DURATION_MILLIS = 60000;
     private static final int NEXT_PHASE_DELAY_SECONDS = 3;
     private static final int END_GAME_DELAY_SECONDS = 5;
     private List<Song> songBank = new ArrayList<>();
@@ -38,14 +37,15 @@ public class GameService {
 
         // Vẫn gọi hàm nạp dữ liệu như bình thường
         loadSongsFromDatabase();
-        maxRounds =  Math.min(10, songBank.size());
+        maxRounds = Math.min(10, songBank.size());
     }
 
     private void loadSongsFromDatabase() {
         try {
             File file = new File(DB_FILE_PATH);
             if (file.exists()) {
-                songBank = objectMapper.readValue(file, new TypeReference<List<Song>>() {});
+                songBank = objectMapper.readValue(file, new TypeReference<List<Song>>() {
+                });
                 System.out.println("✅ Đã load " + songBank.size() + " bài hát từ songs.json");
             } else {
                 file.getParentFile().mkdirs();
@@ -73,6 +73,7 @@ public class GameService {
         saveSongsToDatabase();
         return newSong;
     }
+
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
     private final RoomService roomService;
     private final SimpMessagingTemplate messagingTemplate;
@@ -135,6 +136,17 @@ public class GameService {
                     String userLyrics = (String) contentMap.get("lyrics");
                     List<Double> userPitchContour = new ArrayList<>();
                     Object pitchObj = contentMap.get("pitchContour");
+
+                    // Optional client-side songId check to prevent mismatched submissions
+                    Object clientSongIdObj = contentMap.get("songId");
+                    Song current = lyricsRoom.getCurrentSong();
+                    if (clientSongIdObj instanceof String && current != null) {
+                        String clientSongId = (String) clientSongIdObj;
+                        if (!clientSongId.equals(current.getId())) {
+                            System.out.println("Ignored USER_LYRICS: client songId does not match server currentSong");
+                            return;
+                        }
+                    }
 
                     if (pitchObj instanceof List) {
                         for (Object num : (List<?>) pitchObj) {
@@ -245,8 +257,7 @@ public class GameService {
             score = 0.0;
         }
 
-        if(score < 70)
-        {
+        if (score < 70) {
             score = 0;
         }
 
@@ -333,7 +344,6 @@ public class GameService {
         return text;
     }
 
-
     public void handleToggleReady(String roomId, String userId) {
         Room room = roomService.getRoom(roomId);
         User u = room.getUserById(userId);
@@ -347,6 +357,26 @@ public class GameService {
         Room room = roomService.getRoom(roomId);
         room.setGameState(GameState.LOBBY);
         broadcastState(roomId, GameState.LOBBY, room.getUsers());
+
+        // Ensure clients can preload the first upcoming song while still in lobby
+        try {
+            if (room.getUpcomingSong() == null) {
+                Song upcoming = pickRandomSong(room);
+                room.setUpcomingSong(upcoming);
+                MusicInfo preloadInfo = new MusicInfo(
+                        upcoming.getVideoUrl(),
+                        0,
+                        System.currentTimeMillis(),
+                        false,
+                        null,
+                        upcoming.getId(),
+                        null);
+                broadcastMessage(roomId, MessageType.PRELOAD, preloadInfo);
+            }
+        } catch (Exception e) {
+            // don't block lobby on preload errors
+            System.out.println("Preload selection failed: " + e.getMessage());
+        }
     }
 
     public void handleUserKick(String roomId, String hostId, String kickedPlayer) {
@@ -362,11 +392,25 @@ public class GameService {
     public void startGame(String roomId) {
         Room room = roomService.getRoom(roomId);
         room.setCurrentRound(room.getCurrentRound() + 1);
-        Song song = pickRandomSong(room);
+        Song song = room.getUpcomingSong();
+        if (song != null) {
+            room.setUpcomingSong(null);
+        } else {
+            song = pickRandomSong(room);
+        }
         room.setCurrentSong(song);
         room.setGameState(GameState.PLAY_SEGMENT);
+        Song nextSong = pickRandomSong(room);
+        room.setUpcomingSong(nextSong);
         broadcastState(roomId, GameState.PLAY_SEGMENT,
-                new MusicInfo(song.getVideoUrl(), 0, System.currentTimeMillis(), true));
+                new MusicInfo(
+                        song.getVideoUrl(),
+                        0,
+                        System.currentTimeMillis(),
+                        true,
+                        nextSong != null ? nextSong.getVideoUrl() : null,
+                        song.getId(),
+                        nextSong != null ? nextSong.getId() : null));
         long listenDelayMillis = (long) (song.getListenDuration() * 1000);
         scheduler.schedule(() -> startBuzzerPhase(roomId), listenDelayMillis, TimeUnit.MILLISECONDS);
     }
@@ -462,6 +506,7 @@ public class GameService {
     public void resetGame(String roomId) {
         Room room = roomService.getRoom(roomId);
         room.setCurrentRound(0);
+        room.setUpcomingSong(null);
         room.getPlayedSongIds().clear();
         for (User u : room.getUsers()) {
             u.setScore(0);

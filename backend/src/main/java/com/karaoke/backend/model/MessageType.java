@@ -18,5 +18,6 @@ public enum MessageType {
     LEAVE,
     RENAME,
     RTC_SIGNAL,
-    USER_LYRICS
+    USER_LYRICS,
+    PRELOAD
 }

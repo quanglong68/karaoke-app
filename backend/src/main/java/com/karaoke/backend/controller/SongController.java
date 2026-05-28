@@ -3,6 +3,7 @@ package com.karaoke.backend.controller;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.karaoke.backend.model.Song;
+import com.karaoke.backend.service.CloudinaryMediaService;
 import com.karaoke.backend.service.GameService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -12,8 +13,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.List;
 
 @RestController
@@ -23,42 +22,32 @@ public class SongController {
     @Autowired
     private GameService gameService;
 
+    @Autowired
+    private CloudinaryMediaService cloudinaryMediaService;
+
     @PostMapping("/upload-song")
     public ResponseEntity<?> uploadSong(
             @RequestParam("mainVideo") MultipartFile mainVideo,
             @RequestParam("vocalFile") MultipartFile vocalFile,
             @RequestParam("title") String title,
             @RequestParam("lyrics") String lyrics,
-            @RequestParam("duration") double duration
-    ) {
+            @RequestParam("duration") double duration) {
         try {
-            // 1. LƯU VIDEO CHÍNH VĨNH VIỄN
-            File videoDir = new File("data/videos/");
-            if (!videoDir.exists()) videoDir.mkdirs();
+            Path mainTempPath = createTempFile(mainVideo);
+            Path vocalTempPath = createTempFile(vocalFile);
 
-            String mainFileName = System.currentTimeMillis() + "_main_" + mainVideo.getOriginalFilename().replaceAll("\\s+", "");
-            Path mainPath = Paths.get("data/videos/" + mainFileName);
-            Files.copy(mainVideo.getInputStream(), mainPath, StandardCopyOption.REPLACE_EXISTING);
-            String videoUrl = "http://localhost:8080/videos/" + mainFileName;
+            // 1. UPLOAD MEDIA LÊN CLOUDINARY
+            String videoUrl = cloudinaryMediaService.uploadVideo(mainTempPath, "karaoke/videos");
+            cloudinaryMediaService.uploadAudio(vocalTempPath, "karaoke/vocals");
 
-            // 2. LƯU FILE VOCAL TẠM THỜI
-            File tempDir = new File("data/temp/");
-            if (!tempDir.exists()) tempDir.mkdirs();
+            // 2. JAVA GỌI PYTHON CHẠY AI LẤY PITCH TỪ FILE TẠM
+            List<Double> pitchContour = runPythonExtractor(vocalTempPath.toString());
 
-            String vocalFileName = System.currentTimeMillis() + "_vocal_" + vocalFile.getOriginalFilename().replaceAll("\\s+", "");
-            Path vocalPath = Paths.get("data/temp/" + vocalFileName);
-            Files.copy(vocalFile.getInputStream(), vocalPath, StandardCopyOption.REPLACE_EXISTING);
-
-            // 3. JAVA GỌI PYTHON CHẠY AI LẤY PITCH
-            List<Double> pitchContour = runPythonExtractor(vocalPath.toString());
-
-            // 4. LƯU VÀO DATABASE
+            // 3. LƯU VÀO DATABASE
             Song savedSong = gameService.addNewSong(title, videoUrl, duration, lyrics, pitchContour);
 
-            // 5. DỌN RÁC (XÓA FILE VOCAL VÀ FILE JSON TẠM)
-            Files.deleteIfExists(vocalPath); // Xóa .wav/.mp4
-            String jsonTempPath = vocalPath.toString().substring(0, vocalPath.toString().lastIndexOf('.')) + ".json";
-            Files.deleteIfExists(Paths.get(jsonTempPath)); // Xóa .json
+            // 4. DỌN RÁC (XÓA FILE TẠM VÀ FILE JSON TẠM)
+            cleanupTempArtifacts(mainTempPath, vocalTempPath);
 
             return ResponseEntity.ok(savedSong);
         } catch (Exception e) {
@@ -70,7 +59,8 @@ public class SongController {
     private List<Double> runPythonExtractor(String vocalFilePath) throws Exception {
         System.out.println("⏳ Đang kích hoạt Python...");
 
-        // Cấu hình lệnh chạy Terminal (Windows thường dùng "python", Mac/Linux dùng "python3")
+        // Cấu hình lệnh chạy Terminal (Windows thường dùng "python", Mac/Linux dùng
+        // "python3")
         ProcessBuilder processBuilder = new ProcessBuilder("python", "extract.py", vocalFilePath);
         processBuilder.redirectErrorStream(true); // Gộp cả luồng log và luồng lỗi
         processBuilder.redirectOutput(ProcessBuilder.Redirect.INHERIT); // In log Python ra console của Java
@@ -91,6 +81,44 @@ public class SongController {
         }
 
         ObjectMapper mapper = new ObjectMapper();
-        return mapper.readValue(jsonFile, new TypeReference<List<Double>>() {});
+        return mapper.readValue(jsonFile, new TypeReference<List<Double>>() {
+        });
+    }
+
+    private Path createTempFile(MultipartFile file) throws Exception {
+        String suffix = getFileExtension(file.getOriginalFilename());
+        Path tempFile = Files.createTempFile("karaoke-upload-", suffix);
+        Files.copy(file.getInputStream(), tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        return tempFile;
+    }
+
+    private void cleanupTempArtifacts(Path mainTempPath, Path vocalTempPath) {
+        try {
+            Files.deleteIfExists(mainTempPath);
+        } catch (Exception ignored) {
+        }
+
+        try {
+            Files.deleteIfExists(vocalTempPath);
+        } catch (Exception ignored) {
+        }
+
+        String jsonTempPath = vocalTempPath.toString().substring(0, vocalTempPath.toString().lastIndexOf('.'))
+                + ".json";
+        try {
+            Files.deleteIfExists(Path.of(jsonTempPath));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private String getFileExtension(String originalFilename) {
+        if (originalFilename == null || originalFilename.isBlank()) {
+            return ".tmp";
+        }
+        int dotIndex = originalFilename.lastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == originalFilename.length() - 1) {
+            return ".tmp";
+        }
+        return originalFilename.substring(dotIndex);
     }
 }
