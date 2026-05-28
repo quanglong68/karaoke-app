@@ -103,7 +103,8 @@ export default function GamePage() {
         console.log("===============================");
         sendRoomMessage("USER_LYRICS", {
             lyrics: cleanUserText,
-            pitchContour: pitchContourRef.current
+            pitchContour: pitchContourRef.current,
+            songId: musicInfo.songId || null
         });
     };
 
@@ -471,7 +472,9 @@ export default function GamePage() {
                     if (message.sender !== userName) {
                         playSound("ting.mp3");
                     }
-                } else if (message.type === "PLAY_SEGMENT") {
+                }
+
+                else if (message.type === "PLAY_SEGMENT") {
                     try {
                         const state = message.content as MusicInfo;
                         setMusicInfo(state);
@@ -480,6 +483,34 @@ export default function GamePage() {
                         setNoWinnerMessage(null);
                     } catch (error) {
                         console.error("Failed to parse game state message", error);
+                    }
+                } else if (message.type === "PRELOAD") {
+                    try {
+                        const state = message.content as MusicInfo;
+                        // store preload info so VideoPlayer can preload next/current media
+                        setMusicInfo(state);
+                        try {
+                            let existing = document.getElementById("preload-video") as HTMLVideoElement | null;
+                            if (!existing) {
+                                existing = document.createElement("video");
+                                existing.id = "preload-video";
+                                existing.preload = "auto";
+                                existing.muted = true;
+                                existing.style.display = "none";
+                                document.body.appendChild(existing);
+                            }
+                            existing.pause();
+                            existing.removeAttribute("src");
+                            existing.load();
+                            if (state.videoUrl) {
+                                existing.src = state.videoUrl;
+                                existing.load();
+                            }
+                        } catch (err) {
+                            console.warn("Failed to create preload video element:", err);
+                        }
+                    } catch (error) {
+                        console.error("Failed to parse preload message", error);
                     }
                 } else if (message.type === "BATTLE") {
                     setGameState("BATTLE");

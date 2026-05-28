@@ -3,28 +3,48 @@ import { API_BASE_URL } from "../constants/api";
 
 interface VideoPlayerProps {
     videoUrl: string;
+    nextVideoUrl?: string | null;
     startSeconds: number;
     isPlaying: boolean;
     serverStartTime: number;
     muted?: boolean;
 }
 
-export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverStartTime, muted = false }: VideoPlayerProps) {
+const resolveMediaUrl = (videoUrl: string) => {
+    if (!videoUrl) return "";
+
+    if (videoUrl.startsWith("http://localhost:8080") || videoUrl.startsWith("https://localhost:8080")
+        || videoUrl.startsWith("http://127.0.0.1:8080") || videoUrl.startsWith("https://127.0.0.1:8080")) {
+        return videoUrl.replace(/^https?:\/\/(?:localhost|127\.0\.0\.1):8080/, API_BASE_URL);
+    }
+
+    if (videoUrl.startsWith("/")) {
+        return `${API_BASE_URL}${videoUrl}`;
+    }
+
+    return videoUrl;
+};
+
+export default function VideoPlayer({ videoUrl, nextVideoUrl, startSeconds, isPlaying, serverStartTime, muted = false }: VideoPlayerProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
-    const resolvedVideoUrl = (() => {
-        if (!videoUrl) return "";
+    const preloadRef = useRef<HTMLVideoElement>(null);
+    const resolvedVideoUrl = resolveMediaUrl(videoUrl);
+    const resolvedNextVideoUrl = nextVideoUrl ? resolveMediaUrl(nextVideoUrl) : "";
 
-        if (videoUrl.startsWith("http://localhost:8080") || videoUrl.startsWith("https://localhost:8080")
-            || videoUrl.startsWith("http://127.0.0.1:8080") || videoUrl.startsWith("https://127.0.0.1:8080")) {
-            return videoUrl.replace(/^https?:\/\/(?:localhost|127\.0\.0\.1):8080/, API_BASE_URL);
+    useEffect(() => {
+        const preloadVideo = preloadRef.current;
+        if (!preloadVideo) return;
+
+        preloadVideo.pause();
+        preloadVideo.removeAttribute("src");
+        preloadVideo.load();
+
+        if (resolvedNextVideoUrl) {
+            preloadVideo.src = resolvedNextVideoUrl;
+            preloadVideo.preload = "auto";
+            preloadVideo.load();
         }
-
-        if (videoUrl.startsWith("/")) {
-            return `${API_BASE_URL}${videoUrl}`;
-        }
-
-        return videoUrl;
-    })();
+    }, [resolvedNextVideoUrl]);
 
     useEffect(() => {
         const video = videoRef.current;
@@ -93,6 +113,15 @@ export default function VideoPlayer({ videoUrl, startSeconds, isPlaying, serverS
                 muted={muted}
                 autoPlay={false}
                 controls={false}
+            />
+            <video
+                ref={preloadRef}
+                aria-hidden="true"
+                tabIndex={-1}
+                style={{ display: 'none' }}
+                muted
+                playsInline
+                preload="auto"
             />
         </div>
     );
