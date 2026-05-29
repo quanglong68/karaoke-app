@@ -24,6 +24,7 @@ interface GameStageProps {
     notification: string | null;
     noWinnerMessage: string | null;
     rankedPlayers: RankedUser[];
+    muted?: boolean;
 }
 
 export default function GameStage({
@@ -44,6 +45,7 @@ export default function GameStage({
     notification,
     noWinnerMessage,
     rankedPlayers,
+    muted = false,
 }: GameStageProps) {
     return (
         <StageFrame>
@@ -57,6 +59,7 @@ export default function GameStage({
                 isSinger={isSinger}
                 onFinishPerformance={onFinishPerformance}
                 musicInfo={musicInfo}
+                muted={muted}
             />
             <GameOverlays
                 gameState={gameState}

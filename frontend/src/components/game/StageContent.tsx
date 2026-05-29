@@ -14,6 +14,7 @@ interface StageContentProps {
     isSinger: boolean;
     onFinishPerformance: () => void;
     musicInfo: MusicInfo;
+    muted?: boolean;
 }
 
 export default function StageContent({
@@ -26,6 +27,7 @@ export default function StageContent({
     isSinger,
     onFinishPerformance,
     musicInfo,
+    muted = false,
 }: StageContentProps) {
     if (gameState === "LOBBY") {
         return <LobbyPanel playerList={playerList} isHost={isHost} onKick={onKick} />;
@@ -42,5 +44,5 @@ export default function StageContent({
         );
     }
 
-    return <VideoStage musicInfo={musicInfo} />;
+    return <VideoStage musicInfo={musicInfo} muted={muted} />;
 }
