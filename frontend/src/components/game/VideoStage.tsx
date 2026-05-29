@@ -3,9 +3,10 @@ import type { MusicInfo } from "../../types/game";
 
 interface VideoStageProps {
     musicInfo: MusicInfo;
+    muted?: boolean;
 }
 
-export default function VideoStage({ musicInfo }: VideoStageProps) {
+export default function VideoStage({ musicInfo, muted = false }: VideoStageProps) {
     return (
         <VideoPlayer
             videoUrl={musicInfo.videoUrl}
@@ -13,7 +14,7 @@ export default function VideoStage({ musicInfo }: VideoStageProps) {
             startSeconds={musicInfo.startSeconds}
             isPlaying={musicInfo.isPlaying}
             serverStartTime={musicInfo.serverStartTime}
-            muted={false}
+            muted={muted}
         />
     );
 }

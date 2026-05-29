@@ -71,6 +71,7 @@ export default function GamePage() {
     const [myScore, setMyScore] = useState(0);
     const [playerList, setPlayerList] = useState<User[]>([]);
     const [voiceEnabled, setVoiceEnabled] = useState(false);
+    const [mutedAll, setMutedAll] = useState(false);
     const [hasMicPermission, setHasMicPermission] = useState(false);
     const [micPermissionAsked, setMicPermissionAsked] = useState(false);
 
@@ -92,6 +93,31 @@ export default function GamePage() {
     const showToast = (type: "success" | "error" | "info", text: string) => {
         setToast({ type, text });
         window.setTimeout(() => setToast(null), 3200);
+    };
+
+    const preloadVideo = (videoUrl: string) => {
+        if (!videoUrl) return;
+
+        try {
+            let existing = document.getElementById("preload-video") as HTMLVideoElement | null;
+            if (!existing) {
+                existing = document.createElement("video");
+                existing.id = "preload-video";
+                existing.preload = "auto";
+                existing.muted = true;
+                existing.playsInline = true;
+                existing.style.display = "none";
+                document.body.appendChild(existing);
+            }
+
+            existing.pause();
+            existing.removeAttribute("src");
+            existing.load();
+            existing.src = videoUrl;
+            existing.load();
+        } catch (err) {
+            console.warn("Failed to preload video:", err);
+        }
     };
 
     const evaluateLyricsResult = (userSangText: string) => {
@@ -213,6 +239,7 @@ export default function GamePage() {
 
     const playSound = (fileName: string) => {
         const audio = new Audio(`/sounds/${fileName}`);
+        audio.muted = mutedAll;
         audio.play().catch(error => console.log("Chưa thể phát âm thanh:", error));
     };
 
@@ -291,8 +318,10 @@ export default function GamePage() {
     const attachLocalTracks = () => {
         if (!localStreamRef.current) return;
         const tracks = localStreamRef.current.getTracks();
+        console.debug("attachLocalTracks: attaching", tracks.map(t => t.kind));
         Object.values(peerConnectionsRef.current).forEach(pc => {
             tracks.forEach(track => {
+                console.debug("attachLocalTracks: pc", pc, "track", track.kind);
                 const existingSender = pc.getSenders().find(sender => sender.track?.kind === track.kind);
                 if (existingSender) {
                     existingSender.replaceTrack(track);
@@ -324,6 +353,7 @@ export default function GamePage() {
         };
 
         pc.ontrack = (event) => {
+            console.debug("pc.ontrack from", peerId, "tracks:", event.streams?.length, event.track && event.track.kind);
             let stream = remoteStreamRef.current[peerId];
             if (!stream) {
                 stream = new MediaStream();
@@ -336,12 +366,27 @@ export default function GamePage() {
                 audio = new Audio();
                 audio.autoplay = true;
                 audio.preload = "auto";
+                audio.muted = mutedAll;
                 remoteAudioRef.current[peerId] = audio;
             }
             if (audio.srcObject !== stream) {
+                console.debug("setting audio.srcObject for", peerId, "mutedAll", mutedAll);
                 audio.srcObject = stream;
             }
-            audio.play().catch(() => undefined);
+            audio.play().catch((err) => {
+                console.debug("audio.play failed for", peerId, err);
+                // If autoplay is blocked, wait for first user gesture to resume
+                const onFirstGesture = () => {
+                    try {
+                        audio.muted = mutedAll;
+                        audio.play().catch(() => undefined);
+                    } catch { /* ignore */ }
+                    document.removeEventListener("click", onFirstGesture);
+                    document.removeEventListener("keydown", onFirstGesture);
+                };
+                document.addEventListener("click", onFirstGesture, { once: true });
+                document.addEventListener("keydown", onFirstGesture, { once: true });
+            });
         };
 
         pc.onconnectionstatechange = () => {
@@ -365,6 +410,13 @@ export default function GamePage() {
         }
         return pc;
     };
+
+    useEffect(() => {
+        // Update remote audio elements when mute toggles
+        Object.values(remoteAudioRef.current).forEach(a => {
+            try { a.muted = mutedAll; } catch { /* ignore */ }
+        });
+    }, [mutedAll]);
 
     const isForcedVoice = gameState === "PERFORMANCE" && winnerUser?.userId === userId;
     const isMusicPlaying = gameState === "PLAY_SEGMENT";
@@ -431,6 +483,9 @@ export default function GamePage() {
                 storage.setRoomName(data.room.roomName);
                 storage.setRoomId(data.room.roomId);
                 setUserName(storedName);
+                if (data.room.upcomingSong?.videoUrl) {
+                    preloadVideo(data.room.upcomingSong.videoUrl);
+                }
                 setCanConnect(true);
             })
             .catch((error) => {
@@ -489,26 +544,7 @@ export default function GamePage() {
                         const state = message.content as MusicInfo;
                         // store preload info so VideoPlayer can preload next/current media
                         setMusicInfo(state);
-                        try {
-                            let existing = document.getElementById("preload-video") as HTMLVideoElement | null;
-                            if (!existing) {
-                                existing = document.createElement("video");
-                                existing.id = "preload-video";
-                                existing.preload = "auto";
-                                existing.muted = true;
-                                existing.style.display = "none";
-                                document.body.appendChild(existing);
-                            }
-                            existing.pause();
-                            existing.removeAttribute("src");
-                            existing.load();
-                            if (state.videoUrl) {
-                                existing.src = state.videoUrl;
-                                existing.load();
-                            }
-                        } catch (err) {
-                            console.warn("Failed to create preload video element:", err);
-                        }
+                        preloadVideo(state.videoUrl);
                     } catch (error) {
                         console.error("Failed to parse preload message", error);
                     }
@@ -664,8 +700,34 @@ export default function GamePage() {
         }
     };
 
+    const isHiddenPreloadReady = () => {
+        const preloadVideo = document.getElementById("preload-video") as HTMLVideoElement | null;
+        if (!preloadVideo) return false;
+        return preloadVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+    };
+
     const handleStartGame = () => {
-        sendRoomMessage("PLAY_SEGMENT", "");
+        const startGameNow = () => sendRoomMessage("PLAY_SEGMENT", "");
+
+        if (isHiddenPreloadReady()) {
+            startGameNow();
+            return;
+        }
+
+        const preloadVideo = document.getElementById("preload-video") as HTMLVideoElement | null;
+        if (!preloadVideo) {
+            startGameNow();
+            return;
+        }
+
+        const onReady = () => {
+            preloadVideo.removeEventListener("canplay", onReady);
+            preloadVideo.removeEventListener("loadeddata", onReady);
+            startGameNow();
+        };
+
+        preloadVideo.addEventListener("canplay", onReady, { once: true });
+        preloadVideo.addEventListener("loadeddata", onReady, { once: true });
     };
 
     const handleBuzzerClick = () => {
@@ -758,6 +820,8 @@ export default function GamePage() {
                     micPermissionAsked={micPermissionAsked}
                     shouldStreamVoice={shouldStreamVoice}
                     onToggleVoice={handleToggleVoice}
+                    mutedAll={mutedAll}
+                    onToggleMute={() => setMutedAll(prev => !prev)}
                     onLeaveRoom={handleLeaveRoom}
                     onRename={() => {
                         setRenameValue(userName);
@@ -779,6 +843,7 @@ export default function GamePage() {
                             isSinger={winnerUser?.userId === userId}
                             onFinishPerformance={() => sendRoomMessage("PERFORMANCE_EVALUATION", "")}
                             musicInfo={musicInfo}
+                            muted={mutedAll}
                             clickCount={clickCount}
                             onBuzzer={handleBuzzerClick}
                             winnerUser={winnerUser}

@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { API_BASE_URL } from "../constants/api";
 
 interface VideoPlayerProps {
     videoUrl: string;
@@ -10,26 +9,11 @@ interface VideoPlayerProps {
     muted?: boolean;
 }
 
-const resolveMediaUrl = (videoUrl: string) => {
-    if (!videoUrl) return "";
-
-    if (videoUrl.startsWith("http://localhost:8080") || videoUrl.startsWith("https://localhost:8080")
-        || videoUrl.startsWith("http://127.0.0.1:8080") || videoUrl.startsWith("https://127.0.0.1:8080")) {
-        return videoUrl.replace(/^https?:\/\/(?:localhost|127\.0\.0\.1):8080/, API_BASE_URL);
-    }
-
-    if (videoUrl.startsWith("/")) {
-        return `${API_BASE_URL}${videoUrl}`;
-    }
-
-    return videoUrl;
-};
-
 export default function VideoPlayer({ videoUrl, nextVideoUrl, startSeconds, isPlaying, serverStartTime, muted = false }: VideoPlayerProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const preloadRef = useRef<HTMLVideoElement>(null);
-    const resolvedVideoUrl = resolveMediaUrl(videoUrl);
-    const resolvedNextVideoUrl = nextVideoUrl ? resolveMediaUrl(nextVideoUrl) : "";
+    const resolvedVideoUrl = videoUrl || "";
+    const resolvedNextVideoUrl = nextVideoUrl || "";
 
     useEffect(() => {
         const preloadVideo = preloadRef.current;

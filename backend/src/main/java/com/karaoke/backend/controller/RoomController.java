@@ -3,6 +3,7 @@ package com.karaoke.backend.controller;
 import com.karaoke.backend.model.Room;
 import com.karaoke.backend.model.RoomJoinResponse;
 import com.karaoke.backend.model.User;
+import com.karaoke.backend.service.GameService;
 import com.karaoke.backend.service.RoomService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -17,9 +18,14 @@ public class RoomController {
     @Autowired
     private RoomService roomService;
 
+    @Autowired
+    private GameService gameService;
+
     @PostMapping("/create")
     public RoomJoinResponse createRoom(@RequestParam String roomName, @RequestParam String userName) {
-        return roomService.createRoom(roomName, userName);
+        RoomJoinResponse response = roomService.createRoom(roomName, userName);
+        gameService.lobbyPhase(response.getRoom().getRoomId());
+        return response;
     }
 
     @GetMapping("/list")
@@ -31,6 +37,7 @@ public class RoomController {
     public RoomJoinResponse joinRoom(@RequestParam String roomId, @RequestParam String userName) {
         try {
             User user = roomService.joinRoom(roomId, userName);
+            gameService.lobbyPhase(roomId);
             Room room = roomService.getRoom(roomId);
             return new RoomJoinResponse(room, user);
         } catch (IllegalArgumentException ex) {

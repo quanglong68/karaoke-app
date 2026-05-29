@@ -14,6 +14,7 @@ export interface RtcSignalPayload {
 export interface UserLyricsPayload {
     lyrics: string;
     pitchContour: number[];
+    songId?: string | null;
 }
 
 export interface RenamePayload {

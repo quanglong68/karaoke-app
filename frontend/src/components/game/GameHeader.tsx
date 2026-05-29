@@ -13,6 +13,8 @@ interface GameHeaderProps {
     micPermissionAsked: boolean;
     shouldStreamVoice: boolean;
     onToggleVoice: () => void;
+    mutedAll: boolean;
+    onToggleMute: () => void;
     onLeaveRoom: () => void;
     onRename: () => void;
 }
@@ -31,6 +33,8 @@ export default function GameHeader({
     micPermissionAsked,
     shouldStreamVoice,
     onToggleVoice,
+    mutedAll,
+    onToggleMute,
     onLeaveRoom,
     onRename,
 }: GameHeaderProps) {
@@ -81,6 +85,20 @@ export default function GameHeader({
                     {!hasMicPermission && micPermissionAsked && (
                         <span style={{ marginLeft: "6px", color: "#ffdd59", fontWeight: "bold" }}>!</span>
                     )}
+                </button>
+                <button
+                    onClick={onToggleMute}
+                    style={{
+                        padding: "6px 18px",
+                        borderRadius: "999px",
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        background: mutedAll ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, #06d6a0, #118ab2)",
+                        color: "#f8f8ff",
+                        fontWeight: 700,
+                        cursor: "pointer"
+                    }}
+                >
+                    {mutedAll ? "🔇 TẮT ÂM" : "🔊 MỞ ÂM"}
                 </button>
                 <div style={{ backgroundColor: "rgba(7, 13, 32, 0.65)", padding: "6px 18px", borderRadius: "999px", border: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", gap: "10px" }}>
                     <span style={{ color: "#FFD700" }}>{roomName || "Phòng"}</span>

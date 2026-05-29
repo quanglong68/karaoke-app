@@ -1,5 +1,6 @@
 export type MessageType =
     | "JOIN"
+    | "PRELOAD"
     | "LOBBY"
     | "PLAY_SEGMENT"
     | "BATTLE"

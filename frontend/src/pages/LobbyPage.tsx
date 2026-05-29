@@ -5,6 +5,31 @@ import type { Room } from "../types/room";
 import Toast from "../components/ui/Toast";
 import { storage } from "../utils/storage";
 
+const preloadVideo = (videoUrl: string) => {
+    if (!videoUrl) return;
+
+    try {
+        let existing = document.getElementById("preload-video") as HTMLVideoElement | null;
+        if (!existing) {
+            existing = document.createElement("video");
+            existing.id = "preload-video";
+            existing.preload = "auto";
+            existing.muted = true;
+            existing.playsInline = true;
+            existing.style.display = "none";
+            document.body.appendChild(existing);
+        }
+
+        existing.pause();
+        existing.removeAttribute("src");
+        existing.load();
+        existing.src = videoUrl;
+        existing.load();
+    } catch (error) {
+        console.warn("Failed to preload first video from lobby:", error);
+    }
+};
+
 type PlayMode = "menu" | "friends" | "public" | null;
 
 export default function LobbyPage() {
@@ -64,6 +89,9 @@ export default function LobbyPage() {
             storage.setRoomName(data.room.roomName);
             storage.setRoomId(data.room.roomId);
             storage.setRoomJoinToken(data.room.roomId);
+            if (data.room.upcomingSong?.videoUrl) {
+                preloadVideo(data.room.upcomingSong.videoUrl);
+            }
             navigate(`/room/${data.room.roomId}`);
         } catch (error) {
             console.error("Failed to create room", error);
@@ -84,6 +112,9 @@ export default function LobbyPage() {
             storage.setRoomName(data.room.roomName);
             storage.setRoomId(data.room.roomId);
             storage.setRoomJoinToken(data.room.roomId);
+            if (data.room.upcomingSong?.videoUrl) {
+                preloadVideo(data.room.upcomingSong.videoUrl);
+            }
             navigate(`/room/${data.room.roomId}`);
         } catch (error) {
             const err = error as { response?: { status?: number; data?: { message?: string } } };

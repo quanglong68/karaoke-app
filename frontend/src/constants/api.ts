@@ -1,2 +1,2 @@
-export const API_BASE_URL = "https://investment-hung-older-creature.trycloudflare.com";
-export const WS_ENDPOINT = "https://investment-hung-older-creature.trycloudflare.com/ws-karaoke";
+export const API_BASE_URL = "http://localhost:8080";
+export const WS_ENDPOINT = "http://localhost:8080/ws-karaoke";
