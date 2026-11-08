@@ -256,7 +256,7 @@ public class GameService {
             System.out.println("🚨 [RADAR] ÁN TỬ HÌNH: PHÁT HIỆN HÁT NGANG! User Var: " + userVar);
             score = 0.0;
         }
-
+        System.out.println("🚨 [RADAR] ÁN TỬ HÌNH: PHÁT HIỆN ĐIỂM THẤP HƠN ĐIỂM SÀN! ĐIỂM LÀ: " + score);
         if (score < 70) {
             score = 0;
         }
