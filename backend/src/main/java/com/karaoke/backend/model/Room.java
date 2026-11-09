@@ -12,9 +12,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @NoArgsConstructor
 @Data
 public class Room {
+    public static final int MAX_PLAYERS = 5;
+
     private String roomId;
     private String roomName;
     private GameState gameState;
+    private long lastActivityEpoch = System.currentTimeMillis();
 
     private String currentVideoId;
     private User currentPerformanceUser;
@@ -33,6 +36,11 @@ public class Room {
 
     public void addUser(User user) {
         users.add(user);
+        touch();
+    }
+
+    public void touch() {
+        lastActivityEpoch = System.currentTimeMillis();
     }
 
     public User getUserById(String userId) {

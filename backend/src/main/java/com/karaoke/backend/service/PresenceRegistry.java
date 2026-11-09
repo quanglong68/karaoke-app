@@ -31,7 +31,28 @@ public class PresenceRegistry {
         sessions.put(sessionId, new PresenceInfo(roomId, userId));
     }
 
+    public PresenceInfo get(String sessionId) {
+        return sessions.get(sessionId);
+    }
+
     public PresenceInfo remove(String sessionId) {
         return sessions.remove(sessionId);
+    }
+
+    public void removeUser(String roomId, String userId) {
+        sessions.entrySet().removeIf(entry -> {
+            PresenceInfo info = entry.getValue();
+            return info.getRoomId().equals(roomId) && info.getUserId().equals(userId);
+        });
+    }
+
+    public boolean isUserOnline(String roomId, String userId) {
+        return sessions.values().stream()
+                .anyMatch(info -> info.getRoomId().equals(roomId) && info.getUserId().equals(userId));
+    }
+
+    public boolean hasRoomPresence(String roomId) {
+        return sessions.values().stream()
+                .anyMatch(info -> info.getRoomId().equals(roomId));
     }
 }
