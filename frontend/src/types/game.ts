@@ -8,6 +8,7 @@ export type GameState =
     | "COUNTDOWN"
     | "SCORE_SHOW"
     | "END_GAME";
+export type LyricsStatus = "idle" | "listening" | "unsupported" | "error";
 export interface MusicInfo {
     videoUrl: string;
     startSeconds: number;

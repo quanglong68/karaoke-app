@@ -1,4 +1,4 @@
-import type { GameState, MusicInfo } from "../../types/game";
+import type { GameState, LyricsStatus, MusicInfo } from "../../types/game";
 import type { User } from "../../types/user";
 import LobbyPanel from "./LobbyPanel";
 import PerformancePanel from "./PerformancePanel";
@@ -12,9 +12,11 @@ interface StageContentProps {
     perfCountdown: number;
     lyrics: string;
     isSinger: boolean;
+    singerName?: string | null;
     onFinishPerformance: () => void;
     musicInfo: MusicInfo;
     muted?: boolean;
+    lyricsStatus?: LyricsStatus;
 }
 
 export default function StageContent({
@@ -25,9 +27,11 @@ export default function StageContent({
     perfCountdown,
     lyrics,
     isSinger,
+    singerName = null,
     onFinishPerformance,
     musicInfo,
     muted = false,
+    lyricsStatus = "idle",
 }: StageContentProps) {
     if (gameState === "LOBBY") {
         return <LobbyPanel playerList={playerList} isHost={isHost} onKick={onKick} />;
@@ -39,7 +43,9 @@ export default function StageContent({
                 perfCountdown={perfCountdown}
                 lyrics={lyrics}
                 isSinger={isSinger}
+                singerName={singerName}
                 onFinish={onFinishPerformance}
+                lyricsStatus={lyricsStatus}
             />
         );
     }

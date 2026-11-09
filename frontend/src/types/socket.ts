@@ -25,5 +25,6 @@ export interface SocketMessage {
     type: MessageType;
     content: string | MusicInfo | User | PerformanceResultPayload | User[] | RtcSignalPayload | UserLyricsPayload | RenamePayload;
     sender: string;
+    senderName?: string;
     roomId: string;
 }

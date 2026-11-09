@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 public class RoomJoinResponse {
-    private Room room;
+    private RoomView room;
     private User user;
+    private String sessionToken;
 }

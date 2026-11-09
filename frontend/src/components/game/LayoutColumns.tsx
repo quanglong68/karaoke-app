@@ -5,9 +5,5 @@ interface LayoutColumnsProps {
 }
 
 export default function LayoutColumns({ children }: LayoutColumnsProps) {
-    return (
-        <div style={{ display: "flex", flex: 1, padding: "20px", gap: "20px", overflow: "hidden" }}>
-            {children}
-        </div>
-    );
+    return <div className="game-layout">{children}</div>;
 }

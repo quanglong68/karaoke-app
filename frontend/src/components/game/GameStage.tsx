@@ -1,4 +1,4 @@
-import type { GameState } from "../../types/game";
+import type { GameState, LyricsStatus } from "../../types/game";
 import type { MusicInfo } from "../../types/game";
 import type { User } from "../../types/user";
 import type { RankedUser } from "./Leaderboard";
@@ -25,6 +25,7 @@ interface GameStageProps {
     noWinnerMessage: string | null;
     rankedPlayers: RankedUser[];
     muted?: boolean;
+    lyricsStatus?: LyricsStatus;
 }
 
 export default function GameStage({
@@ -46,6 +47,7 @@ export default function GameStage({
     noWinnerMessage,
     rankedPlayers,
     muted = false,
+    lyricsStatus = "idle",
 }: GameStageProps) {
     return (
         <StageFrame>
@@ -57,9 +59,11 @@ export default function GameStage({
                 perfCountdown={perfCountdown}
                 lyrics={lyrics}
                 isSinger={isSinger}
+                singerName={winnerUser?.userName ?? null}
                 onFinishPerformance={onFinishPerformance}
                 musicInfo={musicInfo}
                 muted={muted}
+                lyricsStatus={lyricsStatus}
             />
             <GameOverlays
                 gameState={gameState}

@@ -14,13 +14,20 @@ public class CloudinaryMediaService {
     private final Cloudinary cloudinary;
 
     public CloudinaryMediaService(
-            @Value("${cloudinary.cloud-name}") String cloudName,
-            @Value("${cloudinary.api-key}") String apiKey,
-            @Value("${cloudinary.api-secret}") String apiSecret) {
-        this.cloudinary = new Cloudinary(ObjectUtils.asMap(
-                "cloud_name", cloudName,
-                "api_key", apiKey,
-                "api_secret", apiSecret));
+            @Value("${cloudinary.cloud-name:}") String cloudName,
+            @Value("${cloudinary.api-key:}") String apiKey,
+            @Value("${cloudinary.api-secret:}") String apiSecret) {
+        boolean configured = !cloudName.isBlank() && !apiKey.isBlank() && !apiSecret.isBlank();
+        this.cloudinary = configured
+                ? new Cloudinary(ObjectUtils.asMap(
+                        "cloud_name", cloudName,
+                        "api_key", apiKey,
+                        "api_secret", apiSecret))
+                : null;
+    }
+
+    public boolean isConfigured() {
+        return cloudinary != null;
     }
 
     public String uploadVideo(Path filePath, String folder) throws IOException {
@@ -32,6 +39,9 @@ public class CloudinaryMediaService {
     }
 
     private String upload(Path filePath, String folder, String resourceType) throws IOException {
+        if (cloudinary == null) {
+            throw new IllegalStateException("CLOUDINARY_NOT_CONFIGURED");
+        }
         Map<?, ?> uploadResult = cloudinary.uploader().upload(filePath.toFile(), ObjectUtils.asMap(
                 "folder", folder,
                 "resource_type", resourceType,
@@ -41,7 +51,7 @@ public class CloudinaryMediaService {
 
         Object secureUrl = uploadResult.get("secure_url");
         if (!(secureUrl instanceof String)) {
-            throw new IllegalStateException("Cloudinary không trả về secure_url hợp lệ");
+            throw new IllegalStateException("UPLOAD_FAILED");
         }
         return (String) secureUrl;
     }

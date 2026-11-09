@@ -5,9 +5,5 @@ interface CenterColumnProps {
 }
 
 export default function CenterColumn({ children }: CenterColumnProps) {
-    return (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-            {children}
-        </div>
-    );
+    return <div className="game-center">{children}</div>;
 }

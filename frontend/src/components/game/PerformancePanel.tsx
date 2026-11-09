@@ -1,75 +1,81 @@
+import { PERFORMANCE_SECONDS } from "../../constants/game";
+import type { LyricsStatus } from "../../types/game";
+import PixelIcon from "../ui/PixelIcon";
+
 interface PerformancePanelProps {
     perfCountdown: number;
     lyrics: string;
     isSinger: boolean;
+    singerName: string | null;
     onFinish: () => void;
+    lyricsStatus?: LyricsStatus;
 }
 
-export default function PerformancePanel({ perfCountdown, lyrics, isSinger, onFinish }: PerformancePanelProps) {
-    return (
-        <div style={{
-            width: "100%",
-            height: "100%",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            alignItems: "center",
-            background: "var(--game-panel-strong)",
-            padding: "20px",
-            boxSizing: "border-box"
-        }}>
-            <div style={{ width: "100%", textAlign: "center", flexShrink: 0 }}>
-                <h2 style={{ color: "#ffd166", fontSize: "26px", margin: "0 0 10px 0", animation: "pulse 1s infinite" }}>
-                    🎤 HÃY HÁT THEO LỜI SAU (Còn {perfCountdown}s) 🎤
-                </h2>
+export default function PerformancePanel({
+    perfCountdown,
+    lyrics,
+    isSinger,
+    singerName,
+    onFinish,
+    lyricsStatus = "idle",
+}: PerformancePanelProps) {
+    const progress = Math.max(0, Math.min(100, (perfCountdown / PERFORMANCE_SECONDS) * 100));
 
-                <div style={{ width: "80%", height: "12px", backgroundColor: "#2f3542", borderRadius: "6px", margin: "0 auto", overflow: "hidden", border: "1px solid #747d8c" }}>
-                    <div style={{
-                        width: `${(perfCountdown / 60) * 100}%`,
-                        height: "100%",
-                        background: "linear-gradient(90deg, #00f5d4, #ff7a59)",
-                        transition: "width 1s linear",
-                        borderRadius: "6px"
-                    }} />
+    return (
+        <div className="perf-panel">
+            <div className="perf-head">
+                <span className="perf-title">
+                    <PixelIcon name="mic" size={18} />
+                    Hát theo lời
+                </span>
+                <div className="perf-head-side">
+                    <span className="live-badge">
+                        <span className="live-dot" />
+                        {isSinger ? "Bạn đang hát" : `${singerName ?? "Ai đó"} đang hát`}
+                    </span>
+                    <span className="perf-timer" aria-label={`Còn ${perfCountdown} giây`}>
+                        {perfCountdown}s
+                    </span>
                 </div>
             </div>
 
-            <div style={{
-                backgroundColor: "rgba(8, 12, 26, 0.7)",
-                padding: "20px",
-                borderRadius: "15px",
-                border: "1px solid rgba(255,255,255,0.12)",
-                width: "80%",
-                textAlign: "center",
-                boxShadow: "0 0 20px rgba(0, 245, 212, 0.15)",
-                flex: 1,
-                margin: "15px 0",
-                overflowY: "auto"
-            }}>
-                <p style={{ fontSize: "24px", color: "#fff", whiteSpace: "pre-wrap", lineHeight: "1.6", margin: 0 }}>
-                    {lyrics || "Đang tải lời bài hát..."}
-                </p>
+            <div
+                className="perf-bar"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={PERFORMANCE_SECONDS}
+                aria-valuenow={perfCountdown}
+                aria-label="Thời gian biểu diễn còn lại"
+            >
+                <div className="perf-bar-fill" style={{ width: `${progress}%` }} />
             </div>
 
-            <div style={{ width: "100%", display: "flex", justifyContent: "center", height: "55px", flexShrink: 0 }}>
+            <div className="perf-lyrics">
+                {lyrics || "Đang tải lời bài hát..."}
+            </div>
+
+            <div className="perf-actions">
                 {isSinger ? (
-                    <button
-                        onClick={onFinish}
-                        style={{
-                            padding: "10px 40px",
-                            fontSize: "20px",
-                            fontWeight: 700,
-                            background: "linear-gradient(135deg, #00f5d4, #118ab2)",
-                            color: "#001219",
-                            border: "none",
-                            borderRadius: "40px",
-                            cursor: "pointer",
-                            boxShadow: "0 5px 18px rgba(0, 245, 212, 0.4)"
-                        }}>
-                        HÁT XONG RỒI!
-                    </button>
+                    <>
+                        <button type="button" className="pbtn pbtn--primary" onClick={onFinish}>
+                            <PixelIcon name="check" size={18} />
+                            Hát xong rồi!
+                        </button>
+                        {lyricsStatus === "listening" && (
+                            <p className="p-muted p-tiny perf-recognition">Đang nhận diện lời bài hát...</p>
+                        )}
+                        {lyricsStatus === "unsupported" && (
+                            <p className="p-muted p-tiny perf-recognition">Trình duyệt không nhận diện lời — vẫn chấm theo nốt.</p>
+                        )}
+                        {lyricsStatus === "error" && (
+                            <p className="p-muted p-tiny perf-recognition">Không nhận diện được lời — vẫn chấm theo nốt.</p>
+                        )}
+                    </>
                 ) : (
-                    <p style={{ color: "#a4b0be", fontSize: "16px", margin: 0 }}>Bạn đang lắng nghe ca sĩ biểu diễn...</p>
+                    <span className="game-controls-note">
+                        <PixelIcon name="music" size={16} />
+                        Bạn đang lắng nghe ca sĩ biểu diễn...
+                    </span>
                 )}
             </div>
         </div>
