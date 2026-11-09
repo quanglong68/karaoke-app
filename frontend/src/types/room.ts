@@ -1,15 +1,19 @@
+import type { GameState } from "./game";
 import type { User } from "./user";
 
-export interface Room {
+export interface RoomSummary {
   roomId: string;
   roomName: string;
-  playing: boolean;
-  currentVideoId: string | null;
-  users: User[];
+  gameState: GameState;
+  playerCount: number;
+  maxPlayers: number;
+  upcomingVideoUrl: string | null;
 }
+
 export interface JoinRoomResponse {
-  room: Room
-  user: User
+  room: RoomSummary;
+  user: User;
+  sessionToken: string;
 }
 
 export interface PerformanceResultPayload {

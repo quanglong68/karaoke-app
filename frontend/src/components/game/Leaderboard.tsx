@@ -1,47 +1,78 @@
 import type { User } from "../../types/user";
+import PixelIcon from "../ui/PixelIcon";
+import PixelAvatar from "../ui/PixelAvatar";
 
 export interface RankedUser extends User {
-    rankIcon: string;
+    rank: number;
 }
 
 interface LeaderboardProps {
     rankedPlayers: RankedUser[];
     userId: string;
+    masterVolume: number;
+    playerVolumes: Record<string, number>;
+    onPlayerVolumeChange: (userId: string, value: number) => void;
 }
 
-export default function Leaderboard({ rankedPlayers, userId }: LeaderboardProps) {
+export default function Leaderboard({
+    rankedPlayers,
+    userId,
+    masterVolume,
+    playerVolumes,
+    onPlayerVolumeChange,
+}: LeaderboardProps) {
     return (
-        <div style={{ width: "280px", background: "var(--game-panel)", borderRadius: "18px", border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 18px 40px rgba(0,0,0,0.45)", animation: "floatIn 0.6s ease" }}>
-            <div style={{ padding: "16px", background: "rgba(12, 18, 36, 0.8)", fontWeight: 700, textAlign: "center", fontSize: "18px", borderBottom: "1px solid rgba(255,255,255,0.05)", color: "#ffd166", letterSpacing: "1px" }}>
-                🏆 BẢNG XẾP HẠNG
+        <aside className="p-panel leaderboard" aria-label="Bảng xếp hạng">
+            <div className="p-panel-head">
+                <PixelIcon name="trophy" size={16} />
+                Bảng xếp hạng
             </div>
-            <div style={{ flex: 1, padding: "16px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div className="leaderboard-list">
+                {rankedPlayers.length === 0 && (
+                    <div className="lobby-empty">Chưa có người chơi nào.</div>
+                )}
                 {rankedPlayers.map((user) => {
                     const isMeUser = user.userId === userId;
+                    const volume = playerVolumes[user.userId] ?? masterVolume;
                     return (
-                        <div key={user.userId} style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            padding: "12px 14px",
-                            backgroundColor: isMeUser ? "rgba(0, 245, 212, 0.12)" : "rgba(21, 27, 48, 0.9)",
-                            borderRadius: "12px",
-                            border: isMeUser ? "1px solid rgba(0, 245, 212, 0.45)" : "1px solid transparent",
-                            transition: "transform 0.2s",
-                        }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                <span style={{ fontSize: "20px", width: "25px", textAlign: "center" }}>{user.rankIcon}</span>
-                                <span style={{ fontSize: "16px", fontWeight: isMeUser ? 700 : 500, color: isMeUser ? "var(--game-accent)" : "#f3f4ff" }}>
-                                    {user.userName} {isMeUser && "(Bạn)"}
+                        <div key={user.userId} className={`rank-row${isMeUser ? " is-me" : ""}`}>
+                            <div className="rank-main">
+                                <div className="rank-left">
+                                    <span className={`rank-badge${user.rank <= 3 ? ` rank-badge--${user.rank}` : ""}`}>
+                                        {user.rank}
+                                    </span>
+                                    <PixelAvatar seed={user.userId} size={22} />
+                                    <span className="rank-name" title={user.userName}>
+                                        {user.userName}{isMeUser ? " (Bạn)" : ""}
+                                    </span>
+                                </div>
+                                <span className="rank-score">
+                                    <PixelIcon name="star" size={13} />
+                                    {user.score}
                                 </span>
                             </div>
-                            <div style={{ fontWeight: 700, color: "#ffd166", fontSize: "18px" }}>
-                                {user.score} ⭐
-                            </div>
+                            {!isMeUser && (
+                                <label
+                                    className="rank-volume"
+                                    title={`Âm lượng giọng ${user.userName}`}
+                                >
+                                    <PixelIcon name="volumeOn" size={12} />
+                                    <input
+                                        type="range"
+                                        min={0}
+                                        max={300}
+                                        step={10}
+                                        value={volume}
+                                        onChange={(event) => onPlayerVolumeChange(user.userId, Number(event.target.value))}
+                                        aria-label={`Âm lượng giọng ${user.userName}`}
+                                    />
+                                    <span className="rank-volume-value">{volume}%</span>
+                                </label>
+                            )}
                         </div>
                     );
                 })}
             </div>
-        </div>
+        </aside>
     );
 }

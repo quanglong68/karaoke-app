@@ -2,7 +2,11 @@ const USER_NAME_KEY = "userName";
 const USER_ID_KEY = "userId";
 const ROOM_NAME_KEY = "roomName";
 const ROOM_ID_KEY = "roomId";
-const ROOM_JOIN_TOKEN_KEY = "roomJoinToken";
+const SESSION_TOKEN_KEY = "sessionToken";
+const LEGACY_ROOM_JOIN_TOKEN_KEY = "roomJoinToken";
+const REMOTE_VOLUME_KEY = "karaokeRemoteVolume";
+const PLAYER_VOLUMES_KEY = "karaokePlayerVolumes";
+const REMOTE_VOLUME_DEFAULT = 150;
 
 export const storage = {
     getUserName(): string {
@@ -29,13 +33,46 @@ export const storage = {
     setRoomId(value: string): void {
         localStorage.setItem(ROOM_ID_KEY, value);
     },
-    getRoomJoinToken(): string {
-        return localStorage.getItem(ROOM_JOIN_TOKEN_KEY) || "";
+    getSessionToken(): string {
+        return localStorage.getItem(SESSION_TOKEN_KEY) || "";
     },
-    setRoomJoinToken(value: string): void {
-        localStorage.setItem(ROOM_JOIN_TOKEN_KEY, value);
+    setSessionToken(value: string): void {
+        localStorage.setItem(SESSION_TOKEN_KEY, value);
     },
-    clearRoomJoinToken(): void {
-        localStorage.removeItem(ROOM_JOIN_TOKEN_KEY);
+    clearSessionToken(): void {
+        localStorage.removeItem(SESSION_TOKEN_KEY);
+        localStorage.removeItem(LEGACY_ROOM_JOIN_TOKEN_KEY);
+    },
+    getRemoteVolume(): number {
+        const raw = localStorage.getItem(REMOTE_VOLUME_KEY);
+        if (raw === null) return REMOTE_VOLUME_DEFAULT;
+        const value = Number(raw);
+        if (!Number.isFinite(value)) return REMOTE_VOLUME_DEFAULT;
+        return Math.min(300, Math.max(0, Math.round(value)));
+    },
+    setRemoteVolume(value: number): void {
+        localStorage.setItem(REMOTE_VOLUME_KEY, String(Math.round(value)));
+    },
+    getPlayerVolumes(): Record<string, number> {
+        try {
+            const raw = localStorage.getItem(PLAYER_VOLUMES_KEY);
+            if (!raw) return {};
+            const parsed: unknown = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+            const result: Record<string, number> = {};
+            Object.entries(parsed as Record<string, unknown>).forEach(([userId, value]) => {
+                const numeric = Number(value);
+                if (userId && Number.isFinite(numeric)) {
+                    result[userId] = Math.min(300, Math.max(0, Math.round(numeric)));
+                }
+            });
+            return result;
+        } catch {
+            return {};
+        }
+    },
+    setPlayerVolumes(values: Record<string, number>): void {
+        const entries = Object.entries(values).slice(-50);
+        localStorage.setItem(PLAYER_VOLUMES_KEY, JSON.stringify(Object.fromEntries(entries)));
     },
 };

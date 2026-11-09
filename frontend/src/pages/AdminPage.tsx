@@ -1,6 +1,17 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE_URL } from "../constants/api";
+import PixelIcon from "../components/ui/PixelIcon";
+
+const ADMIN_KEY_STORAGE = "adminKey";
+const MAX_FILE_BYTES = 200 * 1024 * 1024;
+const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.mkv', '.m4v'];
+const AUDIO_EXTENSIONS = ['.wav', '.mp3', '.m4a', '.flac', '.ogg', '.aac'];
+
+const hasAllowedExtension = (fileName: string, allowed: string[]) => {
+    const lower = fileName.toLowerCase();
+    return allowed.some(extension => lower.endsWith(extension));
+};
 
 const AdminPage: React.FC = () => {
     const [title, setTitle] = useState('');
@@ -8,97 +19,257 @@ const AdminPage: React.FC = () => {
     const [mainVideo, setMainVideo] = useState<File | null>(null);
     const [vocalFile, setVocalFile] = useState<File | null>(null);
     const [duration, setDuration] = useState<number>(0);
+    const [adminKey, setAdminKey] = useState(() => sessionStorage.getItem(ADMIN_KEY_STORAGE) || '');
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    const [success, setSuccess] = useState('');
 
     const navigate = useNavigate();
 
+    const validateFile = (file: File, allowed: string[]): string | null => {
+        if (file.size > MAX_FILE_BYTES) {
+            return 'File quá lớn (tối đa 200MB).';
+        }
+        if (!hasAllowedExtension(file.name, allowed)) {
+            return `Định dạng không hỗ trợ. Chỉ chấp nhận: ${allowed.join(', ')}`;
+        }
+        return null;
+    };
+
     const handleMainVideoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        if (file) {
-            setMainVideo(file);
-            const videoElement = document.createElement('video');
-            videoElement.preload = 'metadata';
-            videoElement.onloadedmetadata = () => {
-                window.URL.revokeObjectURL(videoElement.src);
-                setDuration(videoElement.duration);
-            };
-            videoElement.src = URL.createObjectURL(file);
+        if (!file) {
+            setMainVideo(null);
+            return;
         }
+        const fileError = validateFile(file, VIDEO_EXTENSIONS);
+        if (fileError) {
+            setError(fileError);
+            e.target.value = '';
+            setMainVideo(null);
+            return;
+        }
+        setError('');
+        setMainVideo(file);
+        const videoElement = document.createElement('video');
+        videoElement.preload = 'metadata';
+        videoElement.onloadedmetadata = () => {
+            window.URL.revokeObjectURL(videoElement.src);
+            setDuration(Number.isFinite(videoElement.duration) ? videoElement.duration : 0);
+        };
+        videoElement.onerror = () => {
+            window.URL.revokeObjectURL(videoElement.src);
+            setDuration(0);
+            setError('Không đọc được thời lượng video.');
+        };
+        videoElement.src = URL.createObjectURL(file);
+    };
+
+    const handleVocalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0] || null;
+        if (file) {
+            const fileError = validateFile(file, AUDIO_EXTENSIONS);
+            if (fileError) {
+                setError(fileError);
+                e.target.value = '';
+                setVocalFile(null);
+                return;
+            }
+        }
+        setError('');
+        setVocalFile(file);
     };
 
     const handleUpload = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!mainVideo || !vocalFile || !title || !lyrics) {
-            return alert("⚠️ Vui lòng điền và chọn đủ các trường!");
+        setError('');
+        setSuccess('');
+        if (!adminKey.trim()) {
+            setError('Vui lòng nhập API key quản trị (ADMIN_API_KEY).');
+            return;
+        }
+        if (!mainVideo || !vocalFile || !title.trim() || !lyrics.trim()) {
+            setError('Vui lòng điền và chọn đủ các trường.');
+            return;
+        }
+        if (!Number.isFinite(duration) || duration <= 0) {
+            setError('Chưa đọc được thời lượng video hợp lệ.');
+            return;
         }
 
+        sessionStorage.setItem(ADMIN_KEY_STORAGE, adminKey.trim());
         setLoading(true);
         const formData = new FormData();
         formData.append("mainVideo", mainVideo);
         formData.append("vocalFile", vocalFile);
-        formData.append("title", title);
-        formData.append("lyrics", lyrics);
+        formData.append("title", title.trim());
+        formData.append("lyrics", lyrics.trim());
         formData.append("duration", duration.toString());
 
         try {
             const response = await fetch(`${API_BASE_URL}/api/admin/upload-song`, {
                 method: "POST",
+                headers: { "X-Admin-Key": adminKey.trim() },
                 body: formData,
             });
 
             if (response.ok) {
-                alert("🎉 Đã lên bài thành công!");
+                setSuccess('Đã thêm bài hát thành công!');
                 setTitle(''); setLyrics(''); setMainVideo(null); setVocalFile(null); setDuration(0);
-                (document.getElementById('form-upload') as HTMLFormElement).reset();
+                (document.getElementById('form-upload') as HTMLFormElement | null)?.reset();
             } else {
-                const errorText = await response.text();
-                alert("❌ Lỗi Backend: " + errorText);
+                let message = 'Không thể tải bài hát lên.';
+                try {
+                    const body = await response.json() as { code?: string; message?: string };
+                    if (response.status === 401) {
+                        message = 'API key không đúng hoặc chưa được cấu hình.';
+                    } else if (body?.message) {
+                        message = body.message;
+                    }
+                } catch {
+                    // keep generic message when the body is not JSON
+                }
+                setError(message);
             }
-        } catch (error) {
-            console.error(error);
-            alert("❌ Không thể kết nối với Backend!");
+        } catch (uploadError) {
+            console.error(uploadError);
+            setError('Không thể kết nối với Backend.');
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #121212, #1e1e24)', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '40px 20px', fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif" }}>
-
-            <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(10px)', padding: '40px', borderRadius: '20px', boxShadow: '0 20px 50px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.05)', maxWidth: '650px', width: '100%', color: '#e0e0e0' }}>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
-                    <h2 style={{ margin: 0, color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>THÊM BÀI HÁT</h2>
-                    <button onClick={() => navigate('/')} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: '#fff', padding: '8px 15px', borderRadius: '8px', cursor: 'pointer', boxShadow: '0 4px 6px rgba(0,0,0,0.3)' }}> Về Sảnh</button>
+        <div className="admin-page">
+            <div className="admin-card">
+                <div className="p-window-bar">
+                    <span className="p-window-dots" aria-hidden="true">
+                        <i /><i /><i />
+                    </span>
+                    <span className="p-window-title pixel-label">music-upload.exe</span>
+                    <button type="button" className="pbtn pbtn--sm" onClick={() => navigate('/')}>
+                        <PixelIcon name="arrowLeft" size={15} />
+                        Về sảnh
+                    </button>
                 </div>
 
-                <form id="form-upload" onSubmit={handleUpload} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-                    <div>
-                        <label style={{ fontWeight: 'bold', color: '#aaa' }}>1. Tên bài hát:</label>
-                        <input style={{ width: '100%', padding: '12px', marginTop: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', color: '#fff', boxShadow: 'inset 0 4px 6px rgba(0,0,0,0.5)', boxSizing: 'border-box' }} type="text" value={title} onChange={e => setTitle(e.target.value)} required placeholder="VD: Ex Hate Me..." />
+                <div className="admin-body">
+                    <div className="admin-head">
+                        <h1 className="admin-title">
+                            <PixelIcon name="upload" size={22} />
+                            Thêm bài hát
+                        </h1>
+                        <span className="p-chip p-chip--rose">
+                            <PixelIcon name="warning" size={13} />
+                            Khu vực quản trị
+                        </span>
                     </div>
 
-                    <div style={{ padding: '20px', background: 'linear-gradient(145deg, #1a2a3a, #111d29)', borderRadius: '15px', boxShadow: '8px 8px 16px rgba(0,0,0,0.4), -8px -8px 16px rgba(255,255,255,0.02)', border: '1px solid rgba(0, 150, 255, 0.2)' }}>
-                        <label style={{ color: '#66b2ff', fontWeight: 'bold' }}>🎬 2. File Video Beat (Phát cho người chơi):</label><br />
-                        <input type="file" accept="video/mp4" onChange={handleMainVideoChange} required style={{ marginTop: '10px', color: '#fff' }} />
-                        {duration > 0 && <div style={{ color: '#4CAF50', marginTop: '8px', fontSize: '14px', fontWeight: 'bold', textShadow: '0 0 5px rgba(76, 175, 80, 0.5)' }}>✅ Đã nhận diện thời lượng: {duration.toFixed(2)}s</div>}
-                    </div>
+                    <p className="p-muted p-tiny">
+                        Tải lên video beat, file giọng gốc và lời bài hát để thêm vào danh sách phát.
+                    </p>
 
-                    <div style={{ padding: '20px', background: 'linear-gradient(145deg, #3a1a1f, #291114)', borderRadius: '15px', boxShadow: '8px 8px 16px rgba(0,0,0,0.4), -8px -8px 16px rgba(255,255,255,0.02)', border: '1px solid rgba(255, 100, 100, 0.2)' }}>
-                        <label style={{ color: '#ff6666', fontWeight: 'bold' }}>🎙️ 3.File Voice Gốc (Cho AI phân tích Tone):</label><br />
-                        <input type="file" accept="audio/*,video/mp4" onChange={e => setVocalFile(e.target.files?.[0] || null)} required style={{ marginTop: '10px', color: '#fff' }} />
-                    </div>
+                    <form id="form-upload" className="admin-form" onSubmit={handleUpload}>
+                        <div className="p-field">
+                            <label className="p-label" htmlFor="admin-key">
+                                <PixelIcon name="gear" size={15} />
+                                API key quản trị
+                            </label>
+                            <input
+                                id="admin-key"
+                                className="p-input"
+                                type="password"
+                                value={adminKey}
+                                onChange={e => setAdminKey(e.target.value)}
+                                placeholder="Nhập ADMIN_API_KEY"
+                                autoComplete="off"
+                                required
+                            />
+                        </div>
 
-                    <div>
-                        <label style={{ fontWeight: 'bold', color: '#aaa' }}>4. Lời bài hát:</label>
-                        <textarea style={{ width: '100%', padding: '12px', marginTop: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', color: '#fff', boxShadow: 'inset 0 4px 6px rgba(0,0,0,0.5)', boxSizing: 'border-box', resize: 'vertical' }} rows={6} value={lyrics} onChange={e => setLyrics(e.target.value)} required placeholder="Dán lời bài hát vào đây..." />
-                    </div>
+                        <div className="p-field">
+                            <label className="p-label" htmlFor="song-title">
+                                <PixelIcon name="note" size={15} />
+                                1. Tên bài hát
+                            </label>
+                            <input
+                                id="song-title"
+                                className="p-input"
+                                type="text"
+                                value={title}
+                                maxLength={120}
+                                onChange={e => setTitle(e.target.value)}
+                                required
+                                placeholder="Ví dụ: Ex Hate Me..."
+                            />
+                        </div>
 
-                    <button type="submit" disabled={loading} style={{ padding: '16px', background: loading ? '#555' : 'linear-gradient(145deg, #00c6ff, #0072ff)', color: 'white', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', borderRadius: '12px', fontSize: '16px', boxShadow: loading ? 'none' : '0 10px 20px rgba(0, 114, 255, 0.4)', transition: 'transform 0.1s', textTransform: 'uppercase' }}>
-                        {loading ? "⚙️ Đang xử lý AI..." : " Xác nhận nộp lên Server"}
-                    </button>
-                </form>
+                        <section className="admin-section admin-section--video">
+                            <label className="p-label" htmlFor="main-video">
+                                <PixelIcon name="play" size={15} />
+                                2. File video beat (phát cho người chơi)
+                            </label>
+                            <input
+                                id="main-video"
+                                className="p-input"
+                                type="file"
+                                accept="video/mp4,video/webm,video/quicktime,video/x-matroska"
+                                onChange={handleMainVideoChange}
+                                required
+                            />
+                            {duration > 0 && (
+                                <div className="admin-note">
+                                    <PixelIcon name="check" size={14} />
+                                    Đã nhận diện thời lượng: {duration.toFixed(2)}s
+                                </div>
+                            )}
+                        </section>
+
+                        <section className="admin-section admin-section--audio">
+                            <label className="p-label" htmlFor="vocal-file">
+                                <PixelIcon name="mic" size={15} />
+                                3. File giọng gốc (cho AI phân tích tone)
+                            </label>
+                            <input
+                                id="vocal-file"
+                                className="p-input"
+                                type="file"
+                                accept="audio/*"
+                                onChange={handleVocalChange}
+                                required
+                            />
+                        </section>
+
+                        <div className="p-field">
+                            <label className="p-label" htmlFor="song-lyrics">
+                                <PixelIcon name="chat" size={15} />
+                                4. Lời bài hát
+                            </label>
+                            <textarea
+                                id="song-lyrics"
+                                className="p-input"
+                                rows={6}
+                                value={lyrics}
+                                maxLength={10000}
+                                onChange={e => setLyrics(e.target.value)}
+                                required
+                                placeholder="Dán lời bài hát vào đây..."
+                            />
+                        </div>
+
+                        {error && <div className="admin-alert admin-alert--error" role="alert">{error}</div>}
+                        {success && <div className="admin-alert admin-alert--success" role="status">{success}</div>}
+
+                        <button
+                            type="submit"
+                            className="pbtn pbtn--primary pbtn--block pbtn--xl"
+                            disabled={loading}
+                        >
+                            <PixelIcon name={loading ? "clock" : "upload"} size={18} />
+                            {loading ? "Đang xử lý..." : "Xác nhận tải lên"}
+                        </button>
+                    </form>
+                </div>
             </div>
         </div>
     );
