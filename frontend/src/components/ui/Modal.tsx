@@ -6,12 +6,13 @@ import type { PixelIconName } from "./PixelIcon";
 interface ModalProps {
     title: ReactNode;
     icon?: PixelIconName;
+    wide?: boolean;
     onClose?: () => void;
     children: ReactNode;
     actions?: ReactNode;
 }
 
-export default function Modal({ title, icon, onClose, children, actions }: ModalProps) {
+export default function Modal({ title, icon, wide = false, onClose, children, actions }: ModalProps) {
     const titleId = useId();
 
     useEffect(() => {
@@ -30,7 +31,7 @@ export default function Modal({ title, icon, onClose, children, actions }: Modal
                 if (event.target === event.currentTarget) onClose?.();
             }}
         >
-            <div className="p-modal" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+            <div className={`p-modal${wide ? " p-modal--wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
                 <div className="p-modal-head">
                     <span className="p-modal-title" id={titleId} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                         {icon && <PixelIcon name={icon} size={18} />}

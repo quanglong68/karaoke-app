@@ -12,10 +12,15 @@ export default defineConfig({
   },
   plugins: [basicSsl(), react()],
   server: {
+    watch: {
+      ignored: ['**/*.test.ts', '**/*.test.tsx'],
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        timeout: 600_000,
+        proxyTimeout: 600_000,
       },
       '/ws-karaoke': {
         target: 'http://localhost:8080',

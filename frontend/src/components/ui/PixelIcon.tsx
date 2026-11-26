@@ -26,7 +26,15 @@ export type PixelIconName =
     | "home"
     | "menu"
     | "send"
-    | "refresh";
+    | "refresh"
+    | "key"
+    | "cpu"
+    | "link"
+    | "trash"
+    | "arrowUp"
+    | "arrowDown"
+    | "scissors"
+    | "eye";
 
 const ICONS: Record<PixelIconName, ReactNode> = {
     mic: (
@@ -143,6 +151,47 @@ const ICONS: Record<PixelIconName, ReactNode> = {
         <>
             <path d="M20 12a8 8 0 1 1-2.3-5.6" />
             <path d="M20 4v5h-5" />
+        </>
+    ),
+    key: (
+        <>
+            <circle cx="8" cy="15" r="4" />
+            <path d="M11 12l9-9M16 7l3 3M19 4l2 2" />
+        </>
+    ),
+    cpu: (
+        <>
+            <rect x="6" y="6" width="12" height="12" />
+            <rect x="9" y="9" width="6" height="6" />
+            <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" />
+        </>
+    ),
+    link: (
+        <>
+            <path d="M10 14l4-4" />
+            <path d="M7 17l-2 2a3 3 0 0 1-4-4l4-4a3 3 0 0 1 4 0" />
+            <path d="M17 7l2-2a3 3 0 0 1 4 4l-4 4a3 3 0 0 1-4 0" />
+        </>
+    ),
+    trash: (
+        <>
+            <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
+            <path d="M10 11v6M14 11v6" />
+        </>
+    ),
+    arrowUp: <path d="M12 19V5M6 11l6-6 6 6" />,
+    arrowDown: <path d="M12 5v14M6 13l6 6 6-6" />,
+    scissors: (
+        <>
+            <circle cx="6" cy="6" r="3" />
+            <circle cx="6" cy="18" r="3" />
+            <path d="M20 4L8.5 15.5M14.5 14.5L20 20M8.5 8.5L12 12" />
+        </>
+    ),
+    eye: (
+        <>
+            <path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6-10-6-10-6z" />
+            <circle cx="12" cy="12" r="3" />
         </>
     ),
 };
