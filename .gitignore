@@ -1,5 +1,10 @@
 .agents/
-.env.prod
+.env
+.env.*
+!.env.example
+!.env.prod.example
+backend/.env
+backend/.env.*
 backups/
 backend/data/*.backup-*.json
 backend/cloudflared*.exe

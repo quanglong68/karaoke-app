@@ -19,11 +19,13 @@ RUN python3 -m venv /opt/venv \
     && rm -f /tmp/requirements.txt
 
 RUN useradd --system --create-home --uid 10001 app \
-    && mkdir -p /tmp/numba_cache \
-    && chown -R app:app /tmp/numba_cache
+    && mkdir -p /tmp/numba_cache /app/models \
+    && curl -fSL "https://huggingface.co/Derur/UVR-models/resolve/main/Kim_Vocal_2.onnx" -o /app/models/Kim_Vocal_2.onnx \
+    && chown -R app:app /tmp/numba_cache /app/models
 WORKDIR /app
 COPY --from=build /workspace/target/backend-*.jar /app/app.jar
 COPY extract.py /app/extract.py
+COPY smart_song_worker.py /app/smart_song_worker.py
 COPY data/songs.json /app/data/songs.json
 
 ENV PYTHON_COMMAND=/opt/venv/bin/python \
