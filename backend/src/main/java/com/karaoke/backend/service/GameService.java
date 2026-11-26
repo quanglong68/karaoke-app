@@ -1,144 +1,99 @@
 package com.karaoke.backend.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.karaoke.backend.model.*;
-import org.apache.commons.text.similarity.LevenshteinDistance;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.text.Normalizer;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 public class GameService {
     private static final Logger log = LoggerFactory.getLogger(GameService.class);
 
     private static final String SERVER_SENDER = "server";
-    private static final int BUZZER_DURATION_SECONDS = 5;
-    private static final int COUNTDOWN_DURATION_SECONDS = 3;
-    private static final int PERFORMANCE_DURATION_MILLIS = 60_000;
-    private static final int EVALUATION_FALLBACK_SECONDS = 15;
-    private static final int NEXT_PHASE_DELAY_SECONDS = 3;
-    private static final int END_GAME_DELAY_SECONDS = 5;
     private static final int MAX_LYRICS_LENGTH = 2_000;
     private static final int MAX_PITCH_SAMPLES = 2_000;
-    private static final int MAX_TEXT_LENGTH = 3_000;
-    private static final int MAX_RTC_PAYLOAD_CHARS = 64_000;
-    private static final Set<String> ALLOWED_RTC_ACTIONS = Set.of("offer", "answer", "candidate");
-    private static final Pattern SONG_ID_PATTERN = Pattern.compile("^S(\\d+)$");
+    private static final double MAX_INPUT_PITCH_HZ = 2_000.0;
+    private static final double MILLIS_PER_SECOND = 1_000.0;
+    private static final long KICK_SOCKET_CLOSE_DELAY_MILLIS = 150L;
+    // Buzzer rounds count clicks. Without a server-side floor a script can send
+    // dozens of clicks per second and always win.
+    private static final long MIN_BUZZER_CLICK_INTERVAL_MILLIS = 100L;
 
-    private final List<Song> songBank = new CopyOnWriteArrayList<>();
-    private final Path databasePath = Path.of("data", "songs.json");
-    private final ObjectMapper objectMapper = new ObjectMapper();
-    private final Object databaseLock = new Object();
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10, runnable -> {
-        Thread thread = new Thread(runnable, "game-scheduler");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ScheduledExecutorService scheduler;
     private final Map<String, ScheduledFuture<?>> performanceTimers = new ConcurrentHashMap<>();
     private final Map<String, ScheduledFuture<?>> evaluationTimers = new ConcurrentHashMap<>();
+    private final Map<String, Long> performanceStartMillis = new ConcurrentHashMap<>();
 
     private final RoomService roomService;
     private final SimpMessagingTemplate messagingTemplate;
-    private final int maxRounds;
+    private final SongCatalog songCatalog;
+    private final PerformanceScorer performanceScorer;
+    private final RtcSignalRouter rtcSignalRouter;
 
-    public GameService(RoomService roomService, SimpMessagingTemplate messagingTemplate,
-            @Value("${app.max-rounds:3}") int maxRounds) {
+    @Autowired
+    public GameService(RoomService roomService, SimpMessagingTemplate messagingTemplate, SongCatalog songCatalog,
+            PerformanceScorer performanceScorer, RtcSignalRouter rtcSignalRouter) {
+        this(roomService, messagingTemplate, songCatalog, performanceScorer, rtcSignalRouter, newScheduler());
+    }
+
+    GameService(RoomService roomService, SimpMessagingTemplate messagingTemplate, SongCatalog songCatalog) {
+        this(roomService, messagingTemplate, songCatalog, new PerformanceScorer(),
+                new RtcSignalRouter(roomService, messagingTemplate), newScheduler());
+    }
+
+    GameService(RoomService roomService, SimpMessagingTemplate messagingTemplate, SongCatalog songCatalog,
+            ScheduledExecutorService scheduler) {
+        this(roomService, messagingTemplate, songCatalog, new PerformanceScorer(),
+                new RtcSignalRouter(roomService, messagingTemplate), scheduler);
+    }
+
+    GameService(RoomService roomService, SimpMessagingTemplate messagingTemplate, SongCatalog songCatalog,
+            PerformanceScorer performanceScorer, RtcSignalRouter rtcSignalRouter, ScheduledExecutorService scheduler) {
         this.roomService = roomService;
         this.messagingTemplate = messagingTemplate;
-        this.maxRounds = maxRounds;
-        loadSongsFromDatabase();
-    }
-
-    private void loadSongsFromDatabase() {
-        try {
-            File file = databasePath.toFile();
-            if (!file.exists()) {
-                Files.createDirectories(databasePath.getParent());
-                saveSongsToDatabase();
-                return;
-            }
-            List<Song> loaded = objectMapper.readValue(file, new TypeReference<List<Song>>() {
-            });
-            if (loaded != null) {
-                loaded.stream()
-                        .filter(Objects::nonNull)
-                        .filter(song -> song.getId() != null)
-                        .forEach(songBank::add);
-            }
-            log.info("Loaded {} songs from songs.json", songBank.size());
-        } catch (IOException exception) {
-            log.error("Failed to read song database", exception);
+        this.songCatalog = songCatalog;
+        this.performanceScorer = performanceScorer != null ? performanceScorer : new PerformanceScorer();
+        this.rtcSignalRouter = rtcSignalRouter != null
+                ? rtcSignalRouter
+                : new RtcSignalRouter(roomService, messagingTemplate);
+        this.scheduler = scheduler;
+        if (roomService != null) {
+            // Rooms are removed by RoomService (empty/evicted); drop their timers here
+            // so performanceStartMillis cannot grow without bound.
+            roomService.addRoomRemovalListener(this::forgetRoom);
         }
     }
 
-    private void saveSongsToDatabase() {
-        synchronized (databaseLock) {
-            try {
-                Files.createDirectories(databasePath.getParent());
-                Path tempPath = databasePath.resolveSibling(databasePath.getFileName() + ".tmp");
-                objectMapper.writeValue(tempPath.toFile(), new ArrayList<>(songBank));
-                try {
-                    Files.move(tempPath, databasePath, StandardCopyOption.REPLACE_EXISTING,
-                            StandardCopyOption.ATOMIC_MOVE);
-                } catch (AtomicMoveNotSupportedException exception) {
-                    Files.move(tempPath, databasePath, StandardCopyOption.REPLACE_EXISTING);
-                }
-            } catch (IOException exception) {
-                log.error("Failed to write song database", exception);
-            }
-        }
+    private static ScheduledExecutorService newScheduler() {
+        return Executors.newScheduledThreadPool(10, runnable -> {
+            Thread thread = new Thread(runnable, "game-scheduler");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
-    public Song addNewSong(String title, String videoUrl, double duration, String lyrics, List<Double> pitch) {
-        String newId;
-        Song newSong;
-        synchronized (databaseLock) {
-            newId = "S" + String.format("%03d", nextSongNumber());
-            newSong = new Song(newId, title, videoUrl, duration, duration, lyrics, pitch);
-            songBank.add(newSong);
-            saveSongsToDatabase();
-        }
-        return newSong;
+    public Song addNewSong(String title, String videoUrl, String vocalUrl, double duration, String lyrics,
+            List<Double> pitch) {
+        return addNewSong(title, videoUrl, vocalUrl, duration, lyrics, pitch, null);
     }
 
-    private int nextSongNumber() {
-        int max = 0;
-        for (Song song : songBank) {
-            if (song.getId() == null) {
-                continue;
-            }
-            Matcher matcher = SONG_ID_PATTERN.matcher(song.getId());
-            if (matcher.matches()) {
-                try {
-                    max = Math.max(max, Integer.parseInt(matcher.group(1)));
-                } catch (NumberFormatException ignored) {
-                }
-            }
-        }
-        return max + 1;
+    public Song addNewSong(String title, String videoUrl, String vocalUrl, double duration, String lyrics,
+            List<Double> pitch, String createdBy) {
+        return songCatalog.addSong(title, videoUrl, vocalUrl, duration, lyrics, pitch, createdBy);
     }
 
     public boolean hasSongs() {
-        return !songBank.isEmpty();
+        return songCatalog.hasSongs();
     }
 
-    public int maxRounds() {
-        return Math.min(maxRounds, songBank.size());
+    private int maxRounds(Room room) {
+        return Math.min(room.settingsOrDefault().maxRounds(), songCatalog.songCount());
     }
 
     public void handleGameMessage(String roomId, SocketMessage message, String userId) {
@@ -159,7 +114,7 @@ public class GameService {
                 handleUserClick(roomId, userId);
                 break;
             case RTC_SIGNAL:
-                handleRtcSignal(roomId, userId, message.getContent());
+                rtcSignalRouter.route(roomId, userId, message.getContent());
                 break;
             case JOIN:
                 broadcastMessage(roomId, MessageType.JOIN, room.getUsers());
@@ -216,7 +171,7 @@ public class GameService {
             return;
         }
         GameState state = room.getGameState();
-        if (state != GameState.PERFORMANCE && state != GameState.PERFORMANCE_EVALUATION) {
+        if (state != GameState.PERFORMANCE_EVALUATION) {
             return;
         }
         if (!(content instanceof Map<?, ?> map)) {
@@ -234,23 +189,29 @@ public class GameService {
             lyrics = lyrics.substring(0, MAX_LYRICS_LENGTH);
         }
 
+        List<Double> userPitch = extractValidPitchContour(map.get("pitchContour"));
+        evaluatePerformance(roomId, userId, lyrics, userPitch);
+    }
+
+    private List<Double> extractValidPitchContour(Object rawPitch) {
+        if (!(rawPitch instanceof List<?> pitchList)) {
+            return List.of();
+        }
         List<Double> userPitch = new ArrayList<>();
-        Object pitchObj = map.get("pitchContour");
-        if (pitchObj instanceof List<?> pitchList) {
-            for (Object sample : pitchList) {
-                if (userPitch.size() >= MAX_PITCH_SAMPLES) {
-                    break;
-                }
-                if (sample instanceof Number number) {
-                    double value = number.doubleValue();
-                    if (Double.isFinite(value)) {
-                        userPitch.add(value);
-                    }
+        for (Object sample : pitchList) {
+            if (userPitch.size() >= MAX_PITCH_SAMPLES) {
+                break;
+            }
+            if (sample instanceof Number number) {
+                double value = number.doubleValue();
+                // Human voice (and silence as 0 Hz) only; clients could otherwise
+                // push arbitrary magnitudes into the DTW cost function.
+                if (Double.isFinite(value) && value >= 0 && value <= MAX_INPUT_PITCH_HZ) {
+                    userPitch.add(value);
                 }
             }
         }
-
-        evaluatePerformance(roomId, userId, lyrics, userPitch);
+        return userPitch;
     }
 
     private void handleEvaluationRequest(String roomId, String userId) {
@@ -262,244 +223,25 @@ public class GameService {
         if (performer == null || !performer.getUserId().equals(userId)) {
             return;
         }
+        Long startedAt = performanceStartMillis.get(roomId);
+        if (startedAt != null
+                && System.currentTimeMillis() - startedAt < room.settingsOrDefault().minPerformanceMillis()) {
+            return;
+        }
         cancelPerformanceTimer(roomId);
         startAIEvaluatePhase(roomId);
     }
 
-    private void handleRtcSignal(String roomId, String userId, Object content) {
-        if (!(content instanceof Map<?, ?> payload)) {
-            return;
-        }
-        Object toObj = payload.get("to");
-        Object actionObj = payload.get("action");
-        if (!(toObj instanceof String targetId) || !(actionObj instanceof String action)) {
-            return;
-        }
-        if (!ALLOWED_RTC_ACTIONS.contains(action)) {
-            return;
-        }
-        Room room = roomService.getRoom(roomId);
-        if (room == null || room.getUserById(targetId) == null || targetId.equals(userId)) {
-            return;
-        }
-
-        Map<String, Object> safePayload = new HashMap<>();
-        safePayload.put("action", action);
-        safePayload.put("from", userId);
-        safePayload.put("to", targetId);
-        if ("candidate".equals(action)) {
-            Object candidate = payload.get("candidate");
-            if (!(candidate instanceof Map) || !withinPayloadLimit(candidate)) {
-                return;
-            }
-            safePayload.put("candidate", candidate);
-        } else {
-            Object sdp = payload.get("sdp");
-            if (!(sdp instanceof Map) || !withinPayloadLimit(sdp)) {
-                return;
-            }
-            safePayload.put("sdp", sdp);
-        }
-        broadcast(roomId, new SocketMessage(MessageType.RTC_SIGNAL, safePayload, userId, roomId));
-    }
-
-    private boolean withinPayloadLimit(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value).length() <= MAX_RTC_PAYLOAD_CHARS;
-        } catch (IOException exception) {
-            return false;
-        }
-    }
-
-    private double[] analyzePitch(List<Double> pitches) {
-        List<Double> notes = new ArrayList<>();
-        for (Double hz : pitches) {
-            if (hz != null && hz > 50 && hz < 2000) {
-                notes.add(12 * (Math.log(hz / 440.0) / Math.log(2)));
-            }
-        }
-        if (notes.size() < 2) {
-            return new double[] { 0.0, 0.0 };
-        }
-
-        Collections.sort(notes);
-        int trim = (int) (notes.size() * 0.05);
-        List<Double> cleanNotes = notes.subList(trim, notes.size() - trim);
-        if (cleanNotes.isEmpty()) {
-            cleanNotes = notes;
-        }
-        double sum = 0;
-        for (double note : cleanNotes) {
-            sum += note;
-        }
-        double mean = sum / cleanNotes.size();
-        double varianceSum = 0;
-        for (double note : cleanNotes) {
-            varianceSum += Math.pow(note - mean, 2);
-        }
-        double variance = Math.sqrt(varianceSum / cleanNotes.size());
-        return new double[] { mean, variance };
-    }
-
     double calculateToneScore(List<Double> userPitch, List<Double> originalPitch) {
-        if (userPitch == null || userPitch.isEmpty() || originalPitch == null || originalPitch.isEmpty()) {
-            log.info("Tone skipped: empty contour (user={} original={})",
-                    userPitch == null ? 0 : userPitch.size(),
-                    originalPitch == null ? 0 : originalPitch.size());
-            return 0.0;
-        }
-
-        // Silences between phrases arrive as 0 Hz. Keeping them in the DTW alignment
-        // masquerades as a 5-semitone error and drags every real attempt to 0 points.
-        List<Double> userSamples = voicedSamples(limitSamples(userPitch));
-        List<Double> originalSamples = voicedSamples(limitSamples(originalPitch));
-        if (userSamples.size() < 2 || originalSamples.size() < 2) {
-            log.info("Tone skipped: not enough voiced samples (user={} original={})",
-                    userSamples.size(), originalSamples.size());
-            return 0.0;
-        }
-
-        double[] userStats = analyzePitch(userSamples);
-        double[] origStats = analyzePitch(originalSamples);
-
-        double userMean = userStats[0];
-        double origMean = origStats[0];
-        double userVar = userStats[1];
-        double origVar = origStats[1];
-
-        double keyShift = origMean - userMean;
-        int n = userSamples.size();
-        int m = originalSamples.size();
-        double[][] dtw = new double[n + 1][m + 1];
-        for (int i = 0; i <= n; i++) {
-            Arrays.fill(dtw[i], Double.MAX_VALUE);
-        }
-        dtw[0][0] = 0;
-
-        double stretchPenalty = 2.0;
-
-        for (int i = 1; i <= n; i++) {
-            for (int j = 1; j <= m; j++) {
-                double cost = noteCost(userSamples.get(i - 1), originalSamples.get(j - 1), keyShift);
-                double match = dtw[i - 1][j - 1];
-                double insert = dtw[i - 1][j] + stretchPenalty;
-                double delete = dtw[i][j - 1] + stretchPenalty;
-
-                dtw[i][j] = cost + Math.min(match, Math.min(insert, delete));
-            }
-        }
-
-        // Score a high-percentile alignment cost rather than the mean: a few detections
-        // during note transitions are garbage and would otherwise dominate the average,
-        // while the upper part of the distribution still punishes a wandering melody.
-        double averageDeviation = alignmentDeviation(dtw, userSamples, originalSamples, keyShift, stretchPenalty);
-
-        double score = Math.max(0, 100 - (averageDeviation * 14));
-        if (origVar > 1.2 && userVar < 0.6) {
-            score = 0.0;
-        }
-        // Singing only a short fragment used to score highly because DTW can stretch
-        // those few notes over the whole song; scale it down until most of it is sung.
-        double coverage = Math.min(1.0, (double) n / m);
-        score *= Math.min(1.0, coverage / 0.6);
-
-        log.info("Tone detail: userSamples={} originalSamples={} userVar={} origVar={} keyShift={} avgDeviation={} score={}",
-                n, m, round2(userVar), round2(origVar), round2(keyShift), round2(averageDeviation),
-                Math.round(score));
-        return score;
-    }
-
-    private double noteCost(double userHz, double originalHz, double keyShift) {
-        double userNote = 12 * (Math.log(userHz / 440.0) / Math.log(2)) + keyShift;
-        double originalNote = 12 * (Math.log(originalHz / 440.0) / Math.log(2));
-        return Math.abs(userNote - originalNote);
-    }
-
-    private double alignmentDeviation(double[][] dtw, List<Double> userSamples, List<Double> originalSamples,
-            double keyShift, double stretchPenalty) {
-        List<Double> costs = new ArrayList<>();
-        int i = userSamples.size();
-        int j = originalSamples.size();
-        while (i > 0 && j > 0) {
-            double best = dtw[i][j];
-            double cost = noteCost(userSamples.get(i - 1), originalSamples.get(j - 1), keyShift);
-            // Each transition pays the cell cost first, mirroring the DP fill. Omitting it
-            // from the stretch checks made every non-diagonal step look impossible, so the
-            // walk just slid along the last row and ignored half of the performance.
-            if (withinTolerance(best, cost + dtw[i - 1][j - 1])) {
-                costs.add(cost);
-                i--;
-                j--;
-            } else if (withinTolerance(best, cost + stretchPenalty + dtw[i - 1][j])) {
-                i--;
-            } else if (withinTolerance(best, cost + stretchPenalty + dtw[i][j - 1])) {
-                j--;
-            } else {
-                i--;
-                j--;
-            }
-        }
-        if (costs.isEmpty()) {
-            return 0.0;
-        }
-        costs.sort(Double::compareTo);
-        int index = (int) Math.round(costs.size() * 0.7);
-        return costs.get(Math.min(costs.size() - 1, index));
-    }
-
-    private static boolean withinTolerance(double actual, double expected) {
-        return Math.abs(actual - expected) <= 1e-9 * Math.max(1.0, Math.abs(expected));
-    }
-
-    private List<Double> voicedSamples(List<Double> samples) {
-        List<Double> voiced = new ArrayList<>(samples.size());
-        for (Double hz : samples) {
-            if (hz != null && hz > 50 && hz < 2000) {
-                voiced.add(hz);
-            }
-        }
-        return voiced;
-    }
-
-    private static double round2(double value) {
-        return Math.round(value * 100.0) / 100.0;
-    }
-
-    private List<Double> limitSamples(List<Double> samples) {
-        if (samples.size() <= MAX_PITCH_SAMPLES) {
-            return samples;
-        }
-        List<Double> limited = new ArrayList<>(MAX_PITCH_SAMPLES);
-        double step = (double) samples.size() / MAX_PITCH_SAMPLES;
-        for (int i = 0; i < MAX_PITCH_SAMPLES; i++) {
-            limited.add(samples.get(Math.min(samples.size() - 1, (int) (i * step))));
-        }
-        return limited;
+        return performanceScorer.calculateToneScore(userPitch, originalPitch);
     }
 
     boolean lyricsUnavailable(String userLyrics, String originalLyrics) {
-        String cleanOriginal = normalizeText(originalLyrics);
-        if (cleanOriginal.isEmpty()) {
-            return true;
-        }
-        String cleanUser = normalizeText(userLyrics);
-        return cleanUser.length() < Math.max(3, Math.round(cleanOriginal.length() * 0.2));
+        return performanceScorer.lyricsUnavailable(userLyrics, originalLyrics);
     }
 
     public double calculateLyricsScore(String userLyrics, String originalLyrics) {
-        String cleanUserLyrics = truncate(normalizeText(userLyrics), MAX_TEXT_LENGTH);
-        String cleanOriginalLyrics = truncate(normalizeText(originalLyrics), MAX_TEXT_LENGTH);
-
-        int maxLength = Math.max(cleanUserLyrics.length(), cleanOriginalLyrics.length());
-        if (maxLength == 0) {
-            return 0;
-        }
-        int distance = LevenshteinDistance.getDefaultInstance().apply(cleanUserLyrics, cleanOriginalLyrics);
-        return (1.0 - ((double) distance / maxLength)) * 100;
-    }
-
-    private String truncate(String value, int maxLength) {
-        return value.length() <= maxLength ? value : value.substring(0, maxLength);
+        return performanceScorer.calculateLyricsScore(userLyrics, originalLyrics);
     }
 
     public void evaluatePerformance(String roomId, String userId, String userLyrics, List<Double> userPitchContour) {
@@ -528,6 +270,7 @@ public class GameService {
 
         cancelPerformanceTimer(roomId);
         cancelEvaluationTimer(roomId);
+        performanceStartMillis.remove(roomId);
 
         double lyricsScore = calculateLyricsScore(userLyrics, currentSong.getOriginalLyrics());
         double toneScore = calculateToneScore(userPitchContour, currentSong.getOriginalPitchContour());
@@ -535,8 +278,12 @@ public class GameService {
         // performance was fine. Scoring that as 0 lyrics capped everyone at 60 points,
         // so use the tone score alone when lyric recognition clearly failed.
         boolean lyricsUnavailable = lyricsUnavailable(userLyrics, currentSong.getOriginalLyrics());
-        double finalScore = lyricsUnavailable ? toneScore : (lyricsScore * 0.4) + (toneScore * 0.6);
-        boolean isSuccess = finalScore >= 70.0;
+        GameSettings settings = room.settingsOrDefault();
+        double lyricsWeight = settings.lyricsWeight();
+        double finalScore = lyricsUnavailable
+                ? toneScore
+                : (lyricsScore * lyricsWeight) + (toneScore * (1.0 - lyricsWeight));
+        boolean isSuccess = finalScore >= settings.successScore();
 
         log.info("Score room={} user={} lyrics={} tone={} total={} lyricsUnavailable={}",
                 roomId, performanceUser.getUserId(), Math.round(lyricsScore), Math.round(toneScore),
@@ -559,37 +306,31 @@ public class GameService {
         if (room == null) {
             return;
         }
-        boolean endGame = maxRounds() == 0 || room.getCurrentRound() >= maxRounds();
+        boolean endGame = maxRounds(room) == 0 || room.getCurrentRound() >= maxRounds(room);
         scheduler.schedule(() -> {
             if (endGame) {
                 startEndGamePhase(roomId);
             } else {
                 startGame(roomId);
             }
-        }, NEXT_PHASE_DELAY_SECONDS, TimeUnit.SECONDS);
-    }
-
-    private String normalizeText(String text) {
-        if (text == null) {
-            return "";
-        }
-        String normalized = Normalizer.normalize(text.toLowerCase(), Normalizer.Form.NFD);
-        normalized = normalized.replaceAll("\\p{M}", "");
-        normalized = normalized.replaceAll("\\s+", " ");
-        normalized = normalized.replaceAll("[^a-z0-9 ]", "");
-        return normalized.trim();
+        }, room.settingsOrDefault().nextPhaseDelaySeconds(), TimeUnit.SECONDS);
     }
 
     public void handleToggleReady(String roomId, String userId) {
         Room room = roomService.getRoom(roomId);
-        if (room == null || room.getGameState() != GameState.LOBBY) {
+        if (room == null) {
             return;
         }
-        User user = room.getUserById(userId);
-        if (user == null) {
-            return;
+        synchronized (room) {
+            if (room.getGameState() != GameState.LOBBY) {
+                return;
+            }
+            User user = room.getUserById(userId);
+            if (user == null) {
+                return;
+            }
+            user.setReady(!user.isReady());
         }
-        user.setReady(!user.isReady());
         lobbyPhase(roomId);
     }
 
@@ -598,17 +339,23 @@ public class GameService {
         if (room == null) {
             return;
         }
-        room.setGameState(GameState.LOBBY);
-        broadcastState(roomId, GameState.LOBBY, room.getUsers());
-
-        if (room.getUpcomingSong() != null || !hasSongs()) {
-            return;
+        Song upcoming = null;
+        synchronized (room) {
+            // A join/rename/ready racing a START must not pull the room back to LOBBY.
+            if (room.getGameState() != GameState.LOBBY) {
+                return;
+            }
+            if (room.getUpcomingSong() == null && hasSongs()) {
+                upcoming = pickRandomSong(room);
+                if (upcoming != null) {
+                    room.setUpcomingSong(upcoming);
+                }
+            }
         }
-        Song upcoming = pickRandomSong(room);
+        broadcastState(roomId, GameState.LOBBY, room.getUsers());
         if (upcoming == null) {
             return;
         }
-        room.setUpcomingSong(upcoming);
         MusicInfo preloadInfo = new MusicInfo(
                 upcoming.getVideoUrl(),
                 0,
@@ -630,9 +377,15 @@ public class GameService {
         if (host == null || !host.isHost() || room.getUserById(targetId) == null) {
             return;
         }
-        roomService.leaveRoom(roomId, targetId);
-        roomService.revokeUserSessions(roomId, targetId);
+        List<String> kickedSessions = roomService.detachUserSessions(roomId, targetId);
+        leaveUserAndAdvance(roomId, targetId);
         broadcast(roomId, new SocketMessage(MessageType.KICK_PLAYER, targetId, SERVER_SENDER, roomId));
+        if (!kickedSessions.isEmpty()) {
+            // Delay the hard socket close briefly so the KICK_PLAYER frame flushes to the
+            // kicked client; its session token and presence are already revoked above.
+            scheduler.schedule(() -> roomService.closeWebSocketSessions(kickedSessions),
+                    KICK_SOCKET_CLOSE_DELAY_MILLIS, TimeUnit.MILLISECONDS);
+        }
 
         Room updated = roomService.getRoom(roomId);
         if (updated == null) {
@@ -647,8 +400,42 @@ public class GameService {
 
     public void handleUserLeave(String roomId, String userId) {
         roomService.revokeUserSessions(roomId, userId);
-        roomService.leaveRoom(roomId, userId);
+        leaveUserAndAdvance(roomId, userId);
         notifyRoomUpdate(roomId);
+    }
+
+    /**
+     * Removes the member and keeps the round moving. Kick, LEAVE, the disconnect grace
+     * path and the HTTP leave endpoint all funnel through here so a departing singer
+     * cannot leave the room parked on the performance screen until the 60s timer fires.
+     */
+    private void leaveUserAndAdvance(String roomId, String userId) {
+        if (roomService.leaveRoom(roomId, userId)) {
+            handlePerformerDeparted(roomId);
+        }
+    }
+
+    private void handlePerformerDeparted(String roomId) {
+        cancelPerformanceTimer(roomId);
+        cancelEvaluationTimer(roomId);
+        performanceStartMillis.remove(roomId);
+        Room room = roomService.getRoom(roomId);
+        if (room == null) {
+            return;
+        }
+        synchronized (room) {
+            if (room.getGameState() != GameState.PERFORMANCE
+                    && room.getGameState() != GameState.PERFORMANCE_EVALUATION) {
+                return;
+            }
+            room.setCurrentPerformanceUser(null);
+            room.setCurrentVideoId(null);
+            // Leave the performance state inside the same lock so concurrent leave/kick
+            // paths cannot both schedule a round transition.
+            room.setGameState(GameState.COUNTDOWN);
+        }
+        broadcastMessage(roomId, MessageType.NO_WINNER, "Người hát đã rời phòng");
+        scheduleCountdownThenNext(roomId);
     }
 
     public void notifyRoomUpdate(String roomId) {
@@ -663,18 +450,34 @@ public class GameService {
         if (room == null) {
             return;
         }
-        User user = room.getUserById(userId);
-        if (user == null || !user.isHost()) {
-            return;
+        boolean missingSongs = false;
+        Song[] selected = null;
+        synchronized (room) {
+            User user = room.getUserById(userId);
+            if (user == null || !user.isHost()) {
+                return;
+            }
+            if (room.getGameState() != GameState.LOBBY) {
+                return;
+            }
+            boolean everyoneReady = room.getUsers().size() >= 2
+                    && room.getUsers().stream().allMatch(member -> member.isHost() || member.isReady());
+            if (!everyoneReady) {
+                return;
+            }
+            if (!hasSongs()) {
+                missingSongs = true;
+            } else {
+                selected = prepareRoundLocked(room);
+            }
         }
-        if (room.getGameState() != GameState.LOBBY) {
-            return;
-        }
-        if (!hasSongs()) {
+        if (missingSongs) {
             broadcastMessage(roomId, MessageType.LOBBY, "Chưa có bài hát nào trong hệ thống.");
             return;
         }
-        startGame(roomId);
+        if (selected != null) {
+            launchPreparedRound(roomId, selected[0], selected[1]);
+        }
     }
 
     public void startGame(String roomId) {
@@ -682,27 +485,41 @@ public class GameService {
         if (room == null || !hasSongs()) {
             return;
         }
+        Song[] selected;
+        synchronized (room) {
+            GameState state = room.getGameState();
+            if (state != GameState.LOBBY && state != GameState.SCORE_SHOW && state != GameState.COUNTDOWN) {
+                return;
+            }
+            selected = prepareRoundLocked(room);
+        }
+        if (selected != null) {
+            launchPreparedRound(roomId, selected[0], selected[1]);
+        }
+    }
+
+    private Song[] prepareRoundLocked(Room room) {
+        if (room.getUsers().isEmpty()) {
+            return null;
+        }
         Song song = room.getUpcomingSong();
         if (song == null) {
             song = pickRandomSong(room);
         }
         if (song == null) {
-            return;
+            return null;
         }
         Song nextSong = pickRandomSong(room);
+        room.setCurrentRound(room.getCurrentRound() + 1);
+        room.setCurrentPerformanceUser(null);
+        room.setCurrentSong(song);
+        room.setUpcomingSong(nextSong);
+        room.setCurrentVideoId(song.getId());
+        room.setGameState(GameState.PLAY_SEGMENT);
+        return new Song[] { song, nextSong };
+    }
 
-        synchronized (room) {
-            if (room.getUsers().isEmpty()) {
-                return;
-            }
-            room.setCurrentRound(room.getCurrentRound() + 1);
-            room.setCurrentPerformanceUser(null);
-            room.setCurrentSong(song);
-            room.setUpcomingSong(nextSong);
-            room.setCurrentVideoId(song.getId());
-            room.setGameState(GameState.PLAY_SEGMENT);
-        }
-
+    private void launchPreparedRound(String roomId, Song song, Song nextSong) {
         broadcastState(roomId, GameState.PLAY_SEGMENT,
                 new MusicInfo(
                         song.getVideoUrl(),
@@ -712,7 +529,7 @@ public class GameService {
                         nextSong != null ? nextSong.getVideoUrl() : null,
                         song.getId(),
                         nextSong != null ? nextSong.getId() : null));
-        long listenDelayMillis = Math.max(0L, (long) (song.getListenDuration() * 1000));
+        long listenDelayMillis = Math.max(0L, (long) (song.getListenDuration() * MILLIS_PER_SECOND));
         scheduler.schedule(() -> startBuzzerPhase(roomId), listenDelayMillis, TimeUnit.MILLISECONDS);
     }
 
@@ -722,11 +539,15 @@ public class GameService {
             return;
         }
         synchronized (room) {
+            if (room.getGameState() != GameState.PLAY_SEGMENT) {
+                return;
+            }
             room.getBuzzerCount().clear();
+            room.getBuzzerLastClickAt().clear();
             room.setGameState(GameState.BATTLE);
         }
         broadcastState(roomId, GameState.BATTLE, "");
-        scheduler.schedule(() -> endBuzzerPhase(roomId), BUZZER_DURATION_SECONDS, TimeUnit.SECONDS);
+        scheduler.schedule(() -> endBuzzerPhase(roomId), room.settingsOrDefault().buzzerSeconds(), TimeUnit.SECONDS);
     }
 
     public void endBuzzerPhase(String roomId) {
@@ -734,38 +555,54 @@ public class GameService {
         if (room == null) {
             return;
         }
-        Map<String, Integer> buzzerCount = room.getBuzzerCount();
-        if (buzzerCount.isEmpty()) {
-            room.setCurrentPerformanceUser(null);
-            broadcastMessage(roomId, MessageType.NO_WINNER, "Không ai giành mic");
-            scheduleCountdownThenNext(roomId);
-            return;
+        User winner;
+        synchronized (room) {
+            if (room.getGameState() != GameState.BATTLE) {
+                return;
+            }
+            // Read, decide and clear under the same lock as handleUserClick so a click
+            // arriving on the 5s boundary is either counted or rejected, never wiped
+            // after the maximum was computed.
+            Map<String, Integer> buzzerCount = room.getBuzzerCount();
+            room.getBuzzerLastClickAt().clear();
+            if (buzzerCount.isEmpty()) {
+                room.setCurrentPerformanceUser(null);
+                winner = null;
+            } else {
+                int maxScore = buzzerCount.values().stream().max(Integer::compareTo).orElse(0);
+                List<String> topUsers = buzzerCount.entrySet().stream()
+                        .filter(entry -> entry.getValue() == maxScore)
+                        .map(Map.Entry::getKey)
+                        .toList();
+                String winnerId = topUsers.get(ThreadLocalRandom.current().nextInt(topUsers.size()));
+                buzzerCount.clear();
+                winner = room.getUserById(winnerId);
+                if (winner == null) {
+                    room.setCurrentPerformanceUser(null);
+                } else {
+                    room.setCurrentPerformanceUser(winner);
+                    room.setGameState(GameState.WINNER_SHOW);
+                }
+            }
         }
 
-        int maxScore = buzzerCount.values().stream().max(Integer::compareTo).orElse(0);
-        List<String> topUsers = buzzerCount.entrySet().stream()
-                .filter(entry -> entry.getValue() == maxScore)
-                .map(Map.Entry::getKey)
-                .toList();
-        String winnerId = topUsers.get(ThreadLocalRandom.current().nextInt(topUsers.size()));
-        User winner = room.getUserById(winnerId);
-        buzzerCount.clear();
         if (winner == null) {
-            room.setCurrentPerformanceUser(null);
             broadcastMessage(roomId, MessageType.NO_WINNER, "Không ai giành mic");
             scheduleCountdownThenNext(roomId);
             return;
         }
-
-        room.setCurrentPerformanceUser(winner);
-        room.setGameState(GameState.WINNER_SHOW);
         broadcastState(roomId, GameState.WINNER_SHOW, winner);
         scheduler.schedule(() -> startCountdownPhase(roomId, () -> startPerformancePhase(roomId)),
-                COUNTDOWN_DURATION_SECONDS, TimeUnit.SECONDS);
+                room.settingsOrDefault().countdownSeconds(), TimeUnit.SECONDS);
     }
 
     private void scheduleCountdownThenNext(String roomId) {
-        if (maxRounds() == 0) {
+        Room room = roomService.getRoom(roomId);
+        if (room == null) {
+            return;
+        }
+        boolean endGame = maxRounds(room) == 0 || room.getCurrentRound() >= maxRounds(room);
+        if (endGame) {
             scheduler.schedule(() -> startCountdownPhase(roomId, () -> startEndGamePhase(roomId)), 1,
                     TimeUnit.SECONDS);
         } else {
@@ -778,9 +615,15 @@ public class GameService {
         if (room == null) {
             return;
         }
-        room.setGameState(GameState.COUNTDOWN);
+        synchronized (room) {
+            GameState state = room.getGameState();
+            if (state != GameState.WINNER_SHOW && state != GameState.BATTLE && state != GameState.COUNTDOWN) {
+                return;
+            }
+            room.setGameState(GameState.COUNTDOWN);
+        }
         broadcastState(roomId, GameState.COUNTDOWN, "");
-        scheduler.schedule(nextStep, COUNTDOWN_DURATION_SECONDS, TimeUnit.SECONDS);
+        scheduler.schedule(nextStep, room.settingsOrDefault().countdownSeconds(), TimeUnit.SECONDS);
     }
 
     public void startPerformancePhase(String roomId) {
@@ -788,17 +631,28 @@ public class GameService {
         if (room == null) {
             return;
         }
-        Song currentSong = room.getCurrentSong();
-        if (currentSong == null || room.getCurrentPerformanceUser() == null) {
+        Song currentSong;
+        synchronized (room) {
+            if (room.getGameState() != GameState.COUNTDOWN) {
+                return;
+            }
+            currentSong = room.getCurrentSong();
+            if (currentSong == null || room.getCurrentPerformanceUser() == null) {
+                currentSong = null;
+            } else {
+                room.setGameState(GameState.PERFORMANCE);
+            }
+        }
+        if (currentSong == null) {
             scheduleNextPhase(roomId);
             return;
         }
-        room.setGameState(GameState.PERFORMANCE);
+        performanceStartMillis.put(roomId, System.currentTimeMillis());
         broadcastState(roomId, GameState.PERFORMANCE, currentSong.getOriginalLyrics());
         ScheduledFuture<?> timer = scheduler.schedule(() -> {
             performanceTimers.remove(roomId);
             startAIEvaluatePhase(roomId);
-        }, PERFORMANCE_DURATION_MILLIS, TimeUnit.MILLISECONDS);
+        }, room.settingsOrDefault().performanceSecondsMillis(), TimeUnit.MILLISECONDS);
         cancelPerformanceTimer(roomId);
         performanceTimers.put(roomId, timer);
     }
@@ -808,15 +662,25 @@ public class GameService {
         if (room == null) {
             return;
         }
-        if (room.getCurrentPerformanceUser() == null || room.getCurrentSong() == null) {
-            scheduleNextPhase(roomId);
-            return;
-        }
+        boolean missingPerformanceContext = false;
         synchronized (room) {
             if (room.getGameState() != GameState.PERFORMANCE) {
                 return;
             }
-            room.setGameState(GameState.PERFORMANCE_EVALUATION);
+            if (room.getCurrentPerformanceUser() == null || room.getCurrentSong() == null) {
+                // Leave PERFORMANCE atomically inside the lock so concurrent timers
+                // or leave paths cannot schedule duplicate round transitions.
+                room.setGameState(GameState.COUNTDOWN);
+                missingPerformanceContext = true;
+            } else {
+                room.setGameState(GameState.PERFORMANCE_EVALUATION);
+            }
+        }
+        if (missingPerformanceContext) {
+            cancelPerformanceTimer(roomId);
+            performanceStartMillis.remove(roomId);
+            scheduleNextPhase(roomId);
+            return;
         }
         broadcastState(roomId, GameState.PERFORMANCE_EVALUATION, "");
 
@@ -827,7 +691,7 @@ public class GameService {
             if (current != null && current.getGameState() == GameState.PERFORMANCE_EVALUATION) {
                 evaluatePerformance(roomId, null, "", List.of());
             }
-        }, EVALUATION_FALLBACK_SECONDS, TimeUnit.SECONDS);
+        }, room.settingsOrDefault().evaluationSeconds(), TimeUnit.SECONDS);
         evaluationTimers.put(roomId, fallback);
     }
 
@@ -850,9 +714,15 @@ public class GameService {
         if (room == null) {
             return;
         }
-        room.setGameState(GameState.END_GAME);
+        synchronized (room) {
+            GameState state = room.getGameState();
+            if (state == GameState.LOBBY || state == GameState.END_GAME) {
+                return;
+            }
+            room.setGameState(GameState.END_GAME);
+        }
         broadcastState(roomId, GameState.END_GAME, "");
-        scheduler.schedule(() -> resetGame(roomId), END_GAME_DELAY_SECONDS, TimeUnit.SECONDS);
+        scheduler.schedule(() -> resetGame(roomId), room.settingsOrDefault().endGameDelaySeconds(), TimeUnit.SECONDS);
     }
 
     public void resetGame(String roomId) {
@@ -860,26 +730,59 @@ public class GameService {
         if (room == null) {
             return;
         }
-        room.setCurrentRound(0);
-        room.setUpcomingSong(null);
-        room.setCurrentSong(null);
-        room.setCurrentPerformanceUser(null);
-        room.setCurrentVideoId(null);
-        room.getPlayedSongIds().clear();
-        room.getBuzzerCount().clear();
-        for (User user : room.getUsers()) {
-            user.setScore(0);
-            user.setReady(false);
+        synchronized (room) {
+            if (room.getGameState() != GameState.END_GAME) {
+                return;
+            }
+            room.setGameState(GameState.LOBBY);
+            room.setCurrentRound(0);
+            room.setUpcomingSong(null);
+            room.setCurrentSong(null);
+            room.setCurrentPerformanceUser(null);
+            room.setCurrentVideoId(null);
+            room.getPlayedSongIds().clear();
+            room.getBuzzerCount().clear();
+            room.getBuzzerLastClickAt().clear();
+            for (User user : room.getUsers()) {
+                user.setScore(0);
+                user.setReady(false);
+            }
         }
+        performanceStartMillis.remove(roomId);
         lobbyPhase(roomId);
+    }
+
+    /**
+     * Drops every timer owned by a room that no longer exists.
+     */
+    public void forgetRoom(String roomId) {
+        cancelPerformanceTimer(roomId);
+        cancelEvaluationTimer(roomId);
+        performanceStartMillis.remove(roomId);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        scheduler.shutdownNow();
     }
 
     public void handleUserClick(String roomId, String userId) {
         Room room = roomService.getRoom(roomId);
-        if (room == null || room.getGameState() != GameState.BATTLE || room.getUserById(userId) == null) {
+        if (room == null || room.getUserById(userId) == null) {
             return;
         }
-        room.getBuzzerCount().merge(userId, 1, Integer::sum);
+        long now = System.currentTimeMillis();
+        synchronized (room) {
+            if (room.getGameState() != GameState.BATTLE) {
+                return;
+            }
+            Long lastClick = room.getBuzzerLastClickAt().get(userId);
+            if (lastClick != null && now - lastClick < MIN_BUZZER_CLICK_INTERVAL_MILLIS) {
+                return;
+            }
+            room.getBuzzerLastClickAt().put(userId, now);
+            room.getBuzzerCount().merge(userId, 1, Integer::sum);
+        }
     }
 
     private void broadcast(String roomId, SocketMessage message) {
@@ -895,19 +798,6 @@ public class GameService {
     }
 
     private Song pickRandomSong(Room room) {
-        List<Song> availableSongs = songBank.stream()
-                .filter(Objects::nonNull)
-                .filter(song -> song.getId() != null && !room.getPlayedSongIds().contains(song.getId()))
-                .toList();
-        if (availableSongs.isEmpty()) {
-            room.getPlayedSongIds().clear();
-            availableSongs = songBank.stream().filter(Objects::nonNull).toList();
-        }
-        if (availableSongs.isEmpty()) {
-            return null;
-        }
-        Song pickedSong = availableSongs.get(ThreadLocalRandom.current().nextInt(availableSongs.size()));
-        room.getPlayedSongIds().add(pickedSong.getId());
-        return pickedSong;
+        return songCatalog.pickRandom(room.getPlayedSongIds());
     }
 }

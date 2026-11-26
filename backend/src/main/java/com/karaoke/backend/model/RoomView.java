@@ -15,7 +15,21 @@ public record RoomView(
                 room.getRoomName(),
                 room.getGameState(),
                 room.getUsers().size(),
-                Room.MAX_PLAYERS,
+                room.settingsOrDefault().maxPlayers(),
                 upcoming != null ? upcoming.getVideoUrl() : null);
+    }
+
+    /**
+     * Public lobby listing: shows who is playing, not which media the room will use.
+     * The upcoming video URL is only sent to members after they join.
+     */
+    public static RoomView summary(Room room) {
+        return new RoomView(
+                room.getRoomId(),
+                room.getRoomName(),
+                room.getGameState(),
+                room.getUsers().size(),
+                room.settingsOrDefault().maxPlayers(),
+                null);
     }
 }

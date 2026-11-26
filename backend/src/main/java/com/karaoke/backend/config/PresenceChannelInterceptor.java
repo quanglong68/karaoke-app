@@ -19,6 +19,8 @@ import java.security.Principal;
 public class PresenceChannelInterceptor implements ChannelInterceptor {
     private static final String APP_ROOM_PREFIX = "/app/room/";
     private static final String TOPIC_ROOM_PREFIX = "/topic/room/";
+    private static final String USER_RTC_QUEUE = "/user/queue/rtc";
+    private static final int MAX_SESSIONS_PER_USER = 3;
 
     private final PresenceRegistry presenceRegistry;
     private final SessionService sessionService;
@@ -43,8 +45,10 @@ public class PresenceChannelInterceptor implements ChannelInterceptor {
         }
         if (StompCommand.CONNECT.equals(command)) {
             handleConnect(accessor);
-        } else if (StompCommand.SEND.equals(command) || StompCommand.SUBSCRIBE.equals(command)) {
-            handleRoomBoundCommand(accessor);
+        } else if (StompCommand.SEND.equals(command)) {
+            handleSend(accessor);
+        } else if (StompCommand.SUBSCRIBE.equals(command)) {
+            handleSubscribe(accessor);
         }
         return message;
     }
@@ -64,39 +68,46 @@ public class PresenceChannelInterceptor implements ChannelInterceptor {
         if (sessionId == null) {
             throw new MessagingException("SESSION_INVALID");
         }
+        if (presenceRegistry.countUserSessions(info.roomId(), info.userId(), sessionId) >= MAX_SESSIONS_PER_USER) {
+            throw new MessagingException("TOO_MANY_CONNECTIONS");
+        }
         presenceRegistry.register(sessionId, info.roomId(), info.userId());
         accessor.setUser(new SessionPrincipal(info.userId()));
     }
 
-    private void handleRoomBoundCommand(StompHeaderAccessor accessor) {
+    /**
+     * Only application destinations are accepted from clients. The previous version
+     * also accepted SEND directly to /topic/room/{roomId}, which let any room member
+     * publish arbitrary broadcasts (fake scores, kicks, chat) that bypassed GameService.
+     */
+    private void handleSend(StompHeaderAccessor accessor) {
+        PresenceRegistry.PresenceInfo presence = requirePresence(accessor);
+        String destination = accessor.getDestination();
+        String channel = APP_ROOM_PREFIX + presence.getRoomId();
+        boolean allowed = destination != null
+                && (destination.equals(channel) || destination.equals(channel + "/chat"));
+        if (!allowed) {
+            throw new MessagingException("FORBIDDEN_DESTINATION");
+        }
+    }
+
+    private void handleSubscribe(StompHeaderAccessor accessor) {
+        PresenceRegistry.PresenceInfo presence = requirePresence(accessor);
+        String destination = accessor.getDestination();
+        String expected = TOPIC_ROOM_PREFIX + presence.getRoomId();
+        boolean allowed = expected.equals(destination) || USER_RTC_QUEUE.equals(destination);
+        if (!allowed) {
+            throw new MessagingException("FORBIDDEN_DESTINATION");
+        }
+    }
+
+    private PresenceRegistry.PresenceInfo requirePresence(StompHeaderAccessor accessor) {
         String sessionId = accessor.getSessionId();
         PresenceRegistry.PresenceInfo presence = sessionId == null ? null : presenceRegistry.get(sessionId);
         if (presence == null) {
             throw new MessagingException("SESSION_INVALID");
         }
-        String destination = accessor.getDestination();
-        String destinationRoomId = extractRoomId(destination);
-        if (destinationRoomId == null || !destinationRoomId.equals(presence.getRoomId())) {
-            throw new MessagingException("FORBIDDEN_DESTINATION");
-        }
-    }
-
-    private String extractRoomId(String destination) {
-        String prefix;
-        if (destination == null) {
-            return null;
-        }
-        if (destination.startsWith(APP_ROOM_PREFIX)) {
-            prefix = APP_ROOM_PREFIX;
-        } else if (destination.startsWith(TOPIC_ROOM_PREFIX)) {
-            prefix = TOPIC_ROOM_PREFIX;
-        } else {
-            return null;
-        }
-        String remainder = destination.substring(prefix.length());
-        int slash = remainder.indexOf('/');
-        String roomId = slash >= 0 ? remainder.substring(0, slash) : remainder;
-        return roomId.isEmpty() ? null : roomId;
+        return presence;
     }
 
     private record SessionPrincipal(String name) implements Principal {

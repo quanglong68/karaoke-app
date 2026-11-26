@@ -15,12 +15,15 @@ import java.util.regex.Pattern;
 
 @Component
 public class OriginHandshakeInterceptor implements HandshakeInterceptor {
+    private static final Pattern IPV4_WILDCARD_PREFIX = Pattern.compile("^(?:[0-9]{1,3}\\.){1,3}$");
+
     private final List<String> allowedOrigins;
+    private final List<Pattern> allowedPatterns;
 
     public OriginHandshakeInterceptor(@Value("${app.allowed-origins:}") String origins) {
-        this.allowedOrigins = Arrays.stream(origins.split(","))
-                .map(String::trim)
-                .filter(value -> !value.isEmpty())
+        this.allowedOrigins = SecurityFilterSupport.parseOriginPatterns(origins);
+        this.allowedPatterns = this.allowedOrigins.stream()
+                .map(OriginHandshakeInterceptor::toPattern)
                 .toList();
     }
 
@@ -39,8 +42,8 @@ public class OriginHandshakeInterceptor implements HandshakeInterceptor {
     }
 
     private boolean isAllowed(String origin) {
-        for (String allowed : allowedOrigins) {
-            if (allowed.equals(origin) || toPattern(allowed).matcher(origin).matches()) {
+        for (int i = 0; i < allowedOrigins.size(); i++) {
+            if (allowedOrigins.get(i).equals(origin) || allowedPatterns.get(i).matcher(origin).matches()) {
                 return true;
             }
         }
@@ -48,17 +51,61 @@ public class OriginHandshakeInterceptor implements HandshakeInterceptor {
     }
 
     private static Pattern toPattern(String allowed) {
-        StringBuilder regex = new StringBuilder();
-        for (char c : allowed.toCharArray()) {
-            switch (c) {
-                case '*' -> regex.append(".*");
-                case '[', ']' -> {
-                    // Port-list brackets, e.g. http://host:[*] or http://host:[8080,8081].
+        int schemeEnd = allowed.indexOf("://");
+        if (schemeEnd < 0) {
+            return Pattern.compile("^" + Pattern.quote(allowed) + "$");
+        }
+        String scheme = allowed.substring(0, schemeEnd + 3);
+        String authority = allowed.substring(schemeEnd + 3);
+        boolean optionalWildcardPort = false;
+        String portSuffix = "";
+        if (authority.endsWith(":[*]")) {
+            authority = authority.substring(0, authority.length() - 4);
+            optionalWildcardPort = true;
+        } else {
+            int bracketStart = authority.indexOf(":[");
+            if (bracketStart >= 0 && authority.endsWith("]")) {
+                String list = authority.substring(bracketStart + 2, authority.length() - 1);
+                authority = authority.substring(0, bracketStart);
+                String alternatives = Arrays.stream(list.split(","))
+                        .map(String::trim)
+                        .filter(port -> !port.isEmpty())
+                        .map(Pattern::quote)
+                        .reduce((left, right) -> left + "|" + right)
+                        .orElse("");
+                if (!alternatives.isEmpty()) {
+                    portSuffix = ":(?:" + alternatives + ")";
                 }
-                default -> regex.append(Pattern.quote(String.valueOf(c)));
             }
         }
-        return Pattern.compile(regex.toString());
+        String hostRegex = buildHostRegex(authority);
+        String portRegex = optionalWildcardPort ? "(?::[0-9]{1,5})?" : portSuffix;
+        return Pattern.compile("^" + Pattern.quote(scheme) + hostRegex + portRegex + "$");
+    }
+
+    private static String buildHostRegex(String hostPattern) {
+        int wildcardIndex = hostPattern.indexOf('*');
+        if (wildcardIndex < 0) {
+            return Pattern.quote(hostPattern);
+        }
+        StringBuilder regex = new StringBuilder();
+        int cursor = 0;
+        while (wildcardIndex >= 0) {
+            String literalBefore = hostPattern.substring(cursor, wildcardIndex);
+            regex.append(Pattern.quote(literalBefore));
+            if (wildcardIndex == hostPattern.length() - 1
+                    && IPV4_WILDCARD_PREFIX.matcher(hostPattern.substring(0, wildcardIndex)).matches()) {
+                regex.append("[0-9]{1,3}(?:\\.[0-9]{1,3}){0,2}");
+            } else {
+                regex.append("[A-Za-z0-9-]+");
+            }
+            cursor = wildcardIndex + 1;
+            wildcardIndex = hostPattern.indexOf('*', cursor);
+        }
+        if (cursor < hostPattern.length()) {
+            regex.append(Pattern.quote(hostPattern.substring(cursor)));
+        }
+        return regex.toString();
     }
 
     @Override

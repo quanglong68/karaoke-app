@@ -1,13 +1,12 @@
 package com.karaoke.backend.config;
 
-import com.karaoke.backend.model.MessageType;
+import com.karaoke.backend.model.GameState;
 import com.karaoke.backend.model.Room;
-import com.karaoke.backend.model.SocketMessage;
+import com.karaoke.backend.service.GameService;
 import com.karaoke.backend.service.PresenceRegistry;
 import com.karaoke.backend.service.RoomService;
 import jakarta.annotation.PreDestroy;
 import org.springframework.context.event.EventListener;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
@@ -17,12 +16,15 @@ import java.util.concurrent.TimeUnit;
 
 @Component
 public class WebSocketDisconnectListener {
-    private static final String SERVER_SENDER = "server";
     private static final long RECONNECT_GRACE_MILLIS = 5_000L;
+    // A browser refresh or a short Wi-Fi drop must not cost the player their turn.
+    // While a game is running the membership is kept long enough for the client to
+    // reconnect and rejoin with the same session token.
+    private static final long RECONNECT_GRACE_IN_GAME_MILLIS = 60_000L;
 
     private final PresenceRegistry presenceRegistry;
     private final RoomService roomService;
-    private final SimpMessagingTemplate messagingTemplate;
+    private final GameService gameService;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
         Thread thread = new Thread(runnable, "ws-disconnect");
         thread.setDaemon(true);
@@ -30,10 +32,10 @@ public class WebSocketDisconnectListener {
     });
 
     public WebSocketDisconnectListener(PresenceRegistry presenceRegistry, RoomService roomService,
-            SimpMessagingTemplate messagingTemplate) {
+            GameService gameService) {
         this.presenceRegistry = presenceRegistry;
         this.roomService = roomService;
-        this.messagingTemplate = messagingTemplate;
+        this.gameService = gameService;
     }
 
     @EventListener
@@ -42,7 +44,11 @@ public class WebSocketDisconnectListener {
         if (info == null) {
             return;
         }
-        scheduler.schedule(() -> finalizeLeave(info), RECONNECT_GRACE_MILLIS, TimeUnit.MILLISECONDS);
+        Room room = roomService.getRoom(info.getRoomId());
+        long grace = room != null && room.getGameState() != GameState.LOBBY
+                ? RECONNECT_GRACE_IN_GAME_MILLIS
+                : RECONNECT_GRACE_MILLIS;
+        scheduler.schedule(() -> finalizeLeave(info), grace, TimeUnit.MILLISECONDS);
     }
 
     private void finalizeLeave(PresenceRegistry.PresenceInfo info) {
@@ -53,14 +59,9 @@ public class WebSocketDisconnectListener {
         if (room == null) {
             return;
         }
-        roomService.leaveRoom(info.getRoomId(), info.getUserId());
-        Room updated = roomService.getRoom(info.getRoomId());
-        if (updated == null) {
-            return;
-        }
-        SocketMessage message = new SocketMessage(MessageType.JOIN, updated.getUsers(), SERVER_SENDER,
-                info.getRoomId());
-        messagingTemplate.convertAndSend("/topic/room/" + info.getRoomId(), message);
+        // Route through GameService so a singer who never came back releases the
+        // performance phase instead of stalling it until the 60s timer.
+        gameService.handleUserLeave(info.getRoomId(), info.getUserId());
     }
 
     @PreDestroy
