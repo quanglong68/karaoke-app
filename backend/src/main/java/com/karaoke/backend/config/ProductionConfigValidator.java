@@ -1,6 +1,7 @@
 package com.karaoke.backend.config;
 
 import com.karaoke.backend.service.AdminAuthService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -14,17 +15,32 @@ import java.util.Set;
 @Profile("prod")
 public class ProductionConfigValidator {
     private static final Set<String> PLACEHOLDERS = Set.of(
-            "change-me", "change-me-strong", "changeme", "change_me", "admin123", "password", "postgres");
+            "change-me", "change-me-strong", "changeme", "change_me", "admin123", "password", "postgres",
+            "karaoke-dev-local-ai-crypto-key-change-in-prod");
     private static final Set<String> LOCAL_HOSTS = Set.of("localhost", "127.0.0.1");
     private static final int MIN_ADMIN_PASSWORD_LENGTH = 12;
+    private static final int MIN_AI_CRYPTO_KEY_LENGTH = 16;
 
+    public ProductionConfigValidator(String allowedOrigins,
+            boolean cookieSecure,
+            String bootstrapPassword,
+            String datasourcePassword,
+            String cloudName,
+            String apiKey,
+            String apiSecret) {
+        this(allowedOrigins, cookieSecure, bootstrapPassword, datasourcePassword,
+                cloudName, apiKey, apiSecret, "");
+    }
+
+    @Autowired
     public ProductionConfigValidator(@Value("${app.allowed-origins:}") String allowedOrigins,
             @Value("${app.admin.cookie-secure:false}") boolean cookieSecure,
             @Value("${app.admin.bootstrap-password:}") String bootstrapPassword,
             @Value("${spring.datasource.password:}") String datasourcePassword,
             @Value("${cloudinary.cloud-name:}") String cloudName,
             @Value("${cloudinary.api-key:}") String apiKey,
-            @Value("${cloudinary.api-secret:}") String apiSecret) {
+            @Value("${cloudinary.api-secret:}") String apiSecret,
+            @Value("${ai.crypto-key:}") String aiCryptoKey) {
         if (!cookieSecure) {
             throw new IllegalStateException("ADMIN_COOKIE_SECURE must be true in the prod profile");
         }
@@ -51,6 +67,21 @@ public class ProductionConfigValidator {
         }
         if (isPlaceholder(cloudName) || isPlaceholder(apiKey) || isPlaceholder(apiSecret)) {
             throw new IllegalStateException("Cloudinary credentials still contain an example value");
+        }
+        validateAiCryptoKey(aiCryptoKey);
+    }
+
+    private void validateAiCryptoKey(String aiCryptoKey) {
+        if (aiCryptoKey == null || aiCryptoKey.isBlank()) {
+            return;
+        }
+        String trimmed = aiCryptoKey.trim();
+        if (isPlaceholder(trimmed)) {
+            throw new IllegalStateException("AI_CRYPTO_KEY still uses a placeholder/dev value; set a real secret in prod");
+        }
+        if (trimmed.length() < MIN_AI_CRYPTO_KEY_LENGTH) {
+            throw new IllegalStateException(
+                    "AI_CRYPTO_KEY must be at least " + MIN_AI_CRYPTO_KEY_LENGTH + " characters in prod");
         }
     }
 
