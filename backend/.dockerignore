@@ -1,0 +1,7 @@
+target/
+data/temp/
+data/videos/
+data/*.backup-*.json
+*.log
+.git/
+.idea/

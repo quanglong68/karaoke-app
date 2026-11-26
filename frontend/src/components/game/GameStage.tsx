@@ -12,6 +12,9 @@ interface GameStageProps {
     isHost: boolean;
     onKick: (userId: string) => void;
     perfCountdown: number;
+    performanceSeconds: number;
+    minPerformanceSeconds: number;
+    maxPlayers: number;
     lyrics: string;
     isSinger: boolean;
     onFinishPerformance: () => void;
@@ -34,6 +37,9 @@ export default function GameStage({
     isHost,
     onKick,
     perfCountdown,
+    performanceSeconds,
+    minPerformanceSeconds,
+    maxPlayers,
     lyrics,
     isSinger,
     onFinishPerformance,
@@ -57,6 +63,9 @@ export default function GameStage({
                 isHost={isHost}
                 onKick={onKick}
                 perfCountdown={perfCountdown}
+                performanceSeconds={performanceSeconds}
+                minPerformanceSeconds={minPerformanceSeconds}
+                maxPlayers={maxPlayers}
                 lyrics={lyrics}
                 isSinger={isSinger}
                 singerName={winnerUser?.userName ?? null}

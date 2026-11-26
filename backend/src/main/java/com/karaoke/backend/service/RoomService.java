@@ -1,5 +1,6 @@
 package com.karaoke.backend.service;
 
+import com.karaoke.backend.config.WebSocketSessionRegistry;
 import com.karaoke.backend.exception.AppException;
 import com.karaoke.backend.model.GameState;
 import com.karaoke.backend.model.Room;
@@ -11,10 +12,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 @Service
 public class RoomService {
@@ -22,19 +26,35 @@ public class RoomService {
 
     private static final int MAX_NAME_LENGTH = 24;
     private static final int MAX_ROOM_NAME_LENGTH = 32;
+    private static final int MAX_ACTIVE_ROOMS = 500;
     private static final long ROOM_TTL_MILLIS = 6 * 60 * 60 * 1000L;
     private static final long ORPHAN_ROOM_MILLIS = 90_000L;
 
     private final Map<String, Room> rooms = new ConcurrentHashMap<>();
+    private final List<Consumer<String>> roomRemovalListeners = new CopyOnWriteArrayList<>();
     private final SessionService sessionService;
     private final PresenceRegistry presenceRegistry;
+    private final WebSocketSessionRegistry webSocketSessionRegistry;
+    private final GameConfigService gameConfigService;
 
-    public RoomService(SessionService sessionService, PresenceRegistry presenceRegistry) {
+    public RoomService(SessionService sessionService, PresenceRegistry presenceRegistry,
+            WebSocketSessionRegistry webSocketSessionRegistry, GameConfigService gameConfigService) {
         this.sessionService = sessionService;
         this.presenceRegistry = presenceRegistry;
+        this.webSocketSessionRegistry = webSocketSessionRegistry;
+        this.gameConfigService = gameConfigService;
+    }
+
+    public void addRoomRemovalListener(Consumer<String> listener) {
+        if (listener != null) {
+            roomRemovalListeners.add(listener);
+        }
     }
 
     public RoomJoinResponse createRoom(String roomName, String userName) {
+        if (rooms.size() >= MAX_ACTIVE_ROOMS) {
+            throw AppException.unavailable("ROOM_CAPACITY_REACHED");
+        }
         String safeRoomName = sanitizeName(roomName, "ROOM_NAME_INVALID", MAX_ROOM_NAME_LENGTH);
         String safeUserName = sanitizeName(userName, "USER_NAME_INVALID", MAX_NAME_LENGTH);
 
@@ -42,6 +62,7 @@ public class RoomService {
         room.setRoomId(generateRoomId());
         room.setRoomName(safeRoomName);
         room.setGameState(GameState.LOBBY);
+        room.setSettings(gameConfigService.current());
 
         User user = new User(generateUserId(room), safeUserName, 0, true, true);
         room.addUser(user);
@@ -49,7 +70,7 @@ public class RoomService {
 
         String token = sessionService.issue(room.getRoomId(), user.getUserId());
         log.info("Room created: {}", room.getRoomId());
-        return new RoomJoinResponse(RoomView.from(room), user, token);
+        return new RoomJoinResponse(RoomView.from(room), user, token, room.getSettings());
     }
 
     public RoomJoinResponse joinRoom(String roomId, String userName) {
@@ -61,7 +82,7 @@ public class RoomService {
             if (room.getGameState() != GameState.LOBBY) {
                 throw AppException.conflict("ROOM_PLAYING");
             }
-            if (room.getUsers().size() >= Room.MAX_PLAYERS) {
+            if (room.getUsers().size() >= room.settingsOrDefault().maxPlayers()) {
                 throw AppException.conflict("ROOM_FULL");
             }
             user = new User(generateUserId(room), safeUserName, 0, false, false);
@@ -69,7 +90,7 @@ public class RoomService {
         }
 
         String token = sessionService.issue(room.getRoomId(), user.getUserId());
-        return new RoomJoinResponse(RoomView.from(room), user, token);
+        return new RoomJoinResponse(RoomView.from(room), user, token, room.settingsOrDefault());
     }
 
     public RoomJoinResponse rejoin(String sessionToken) {
@@ -85,14 +106,7 @@ public class RoomService {
             throw AppException.unauthorized("SESSION_INVALID");
         }
         room.touch();
-        return new RoomJoinResponse(RoomView.from(room), user, sessionToken);
-    }
-
-    public SessionService.SessionInfo leaveByToken(String sessionToken) {
-        SessionService.SessionInfo info = requireSession(sessionToken);
-        leaveRoom(info.roomId(), info.userId());
-        sessionService.revoke(sessionToken);
-        return info;
+        return new RoomJoinResponse(RoomView.from(room), user, sessionToken, room.settingsOrDefault());
     }
 
     public SessionService.SessionInfo requireSession(String sessionToken) {
@@ -117,7 +131,7 @@ public class RoomService {
 
     public List<RoomView> listRooms() {
         return rooms.values().stream()
-                .map(RoomView::from)
+                .map(RoomView::summary)
                 .toList();
     }
 
@@ -128,34 +142,51 @@ public class RoomService {
         }
     }
 
-    public void leaveRoom(String roomId, String userId) {
+    public boolean leaveRoom(String roomId, String userId) {
         Room room = getRoom(roomId);
         if (room == null) {
-            return;
+            return false;
         }
-        User leavingUser = room.getUserById(userId);
-        if (leavingUser == null) {
-            return;
-        }
+        boolean removed = false;
+        boolean wasPerformer = false;
         synchronized (room) {
+            User leavingUser = room.getUserById(userId);
+            if (leavingUser == null) {
+                return false;
+            }
+            wasPerformer = room.getCurrentPerformanceUser() != null
+                    && room.getCurrentPerformanceUser().getUserId().equals(userId);
             room.getUsers().removeIf(user -> user.getUserId().equals(userId));
             room.getBuzzerCount().remove(userId);
-            room.getVotes().remove(userId);
-            room.getUserNamesMap().remove(userId);
-            if (room.getCurrentPerformanceUser() != null
-                    && room.getCurrentPerformanceUser().getUserId().equals(userId)) {
+            room.getBuzzerLastClickAt().remove(userId);
+            if (wasPerformer) {
                 room.setCurrentPerformanceUser(null);
             }
             if (room.getUsers().isEmpty()) {
-                rooms.remove(roomId);
-                return;
+                removed = true;
+            } else {
+                if (leavingUser.isHost()) {
+                    User newHost = room.getUsers().get(0);
+                    newHost.setHost(true);
+                    newHost.setReady(true);
+                }
+                room.touch();
             }
-            if (leavingUser.isHost()) {
-                User newHost = room.getUsers().get(0);
-                newHost.setHost(true);
-                newHost.setReady(true);
+        }
+        if (removed) {
+            rooms.remove(roomId, room);
+            notifyRoomRemoved(roomId);
+        }
+        return wasPerformer;
+    }
+
+    private void notifyRoomRemoved(String roomId) {
+        for (Consumer<String> listener : roomRemovalListeners) {
+            try {
+                listener.accept(roomId);
+            } catch (RuntimeException exception) {
+                log.warn("Room removal listener failed for {}", roomId, exception);
             }
-            room.touch();
         }
     }
 
@@ -175,13 +206,30 @@ public class RoomService {
 
     public void revokeUserSessions(String roomId, String userId) {
         sessionService.revokeUser(roomId, userId);
-        // A revoked member must not keep sending on its still-open socket.
-        presenceRegistry.removeUser(roomId, userId);
+        // A revoked member must not keep sending or receiving on its still-open socket.
+        webSocketSessionRegistry.closeSessions(presenceRegistry.removeUserSessions(roomId, userId));
+    }
+
+    /**
+     * Revokes tokens and presence immediately while returning the open WebSocket
+     * session IDs so the caller can flush a final notice (e.g. KICK_PLAYER) before
+     * forcibly closing the sockets.
+     */
+    public List<String> detachUserSessions(String roomId, String userId) {
+        sessionService.revokeUser(roomId, userId);
+        return presenceRegistry.removeUserSessions(roomId, userId);
+    }
+
+    public void closeWebSocketSessions(List<String> sessionIds) {
+        if (sessionIds != null && !sessionIds.isEmpty()) {
+            webSocketSessionRegistry.closeSessions(sessionIds);
+        }
     }
 
     @Scheduled(fixedDelay = 60_000)
     public void cleanupStaleRooms() {
         long now = System.currentTimeMillis();
+        List<String> removedRoomIds = new ArrayList<>();
         rooms.entrySet().removeIf(entry -> {
             Room room = entry.getValue();
             boolean empty = room.getUsers().isEmpty();
@@ -191,10 +239,12 @@ public class RoomService {
             if (!empty && !stale && !orphan) {
                 return false;
             }
-            room.getUsers().forEach(user -> sessionService.revokeUser(entry.getKey(), user.getUserId()));
+            room.getUsers().forEach(user -> revokeUserSessions(entry.getKey(), user.getUserId()));
+            removedRoomIds.add(entry.getKey());
             log.info("Room evicted: {}", entry.getKey());
             return true;
         });
+        removedRoomIds.forEach(this::notifyRoomRemoved);
     }
 
     private String generateRoomId() {

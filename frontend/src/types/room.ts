@@ -10,10 +10,25 @@ export interface RoomSummary {
   upcomingVideoUrl: string | null;
 }
 
+export interface GameSettings {
+  maxRounds: number;
+  maxPlayers: number;
+  buzzerSeconds: number;
+  countdownSeconds: number;
+  performanceSeconds: number;
+  minPerformanceSeconds: number;
+  evaluationSeconds: number;
+  nextPhaseDelaySeconds: number;
+  endGameDelaySeconds: number;
+  successScore: number;
+  lyricsWeight: number;
+}
+
 export interface JoinRoomResponse {
   room: RoomSummary;
   user: User;
   sessionToken: string;
+  settings: GameSettings;
 }
 
 export interface PerformanceResultPayload {

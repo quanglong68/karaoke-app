@@ -1,0 +1,92 @@
+name: karaoke-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: karaoke-prod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - karaoke
+
+  backend:
+    build:
+      context: ./backend
+    image: karaoke-backend:prod
+    container_name: karaoke-prod-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      APP_ALLOWED_ORIGINS: ${APP_ALLOWED_ORIGINS:?APP_ALLOWED_ORIGINS is required, e.g. https://karaoke.example.com}
+      ADMIN_COOKIE_SECURE: "true"
+      # Must be set explicitly: true only when the entrypoint nginx overwrites
+      # X-Forwarded-For. Leaving it unset fails fast instead of trusting spoofed IPs.
+      TRUST_FORWARDED_HEADERS: ${TRUST_FORWARDED_HEADERS:?TRUST_FORWARDED_HEADERS is required, set true when a trusted proxy overwrites X-Forwarded-For}
+      ADMIN_SESSION_DAYS: ${ADMIN_SESSION_DAYS:-7}
+      ADMIN_BOOTSTRAP_USERNAME: ${ADMIN_BOOTSTRAP_USERNAME:-}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:?CLOUDINARY_CLOUD_NAME is required}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:?CLOUDINARY_API_KEY is required}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:?CLOUDINARY_API_SECRET is required}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-200MB}
+      MAX_REQUEST_SIZE: ${MAX_REQUEST_SIZE:-420MB}
+      APP_LEGACY_IMPORT_ENABLED: ${APP_LEGACY_IMPORT_ENABLED:-false}
+      APP_LEGACY_IMPORT_PATH: ${APP_LEGACY_IMPORT_PATH:-data/songs.json}
+      EXTRACT_TIMEOUT_SECONDS: ${EXTRACT_TIMEOUT_SECONDS:-300}
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75}
+    # Never publish 8080: only the frontend nginx should reach the API.
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - karaoke
+
+  frontend:
+    build:
+      context: ./frontend
+    image: karaoke-frontend:prod
+    container_name: karaoke-prod-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      # Bind to loopback; the public TLS entrypoint (Cloudflare Tunnel or Caddy) proxies here.
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8088}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    networks:
+      - karaoke
+
+volumes:
+  pgdata:
+
+networks:
+  karaoke:

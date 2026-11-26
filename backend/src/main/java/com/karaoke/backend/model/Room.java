@@ -12,12 +12,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @NoArgsConstructor
 @Data
 public class Room {
-    public static final int MAX_PLAYERS = 5;
-
     private String roomId;
     private String roomName;
     private GameState gameState;
     private long lastActivityEpoch = System.currentTimeMillis();
+    /** Snapshot of the admin config taken when the room was created. */
+    private GameSettings settings;
 
     private String currentVideoId;
     private User currentPerformanceUser;
@@ -31,8 +31,7 @@ public class Room {
 
     private Set<String> playedSongIds = ConcurrentHashMap.newKeySet();
     private Map<String, Integer> buzzerCount = new ConcurrentHashMap<>();
-    private Map<String, Boolean> votes = new ConcurrentHashMap<>();
-    private Map<String, String> userNamesMap = new ConcurrentHashMap<>();
+    private Map<String, Long> buzzerLastClickAt = new ConcurrentHashMap<>();
 
     public void addUser(User user) {
         users.add(user);
@@ -41,6 +40,10 @@ public class Room {
 
     public void touch() {
         lastActivityEpoch = System.currentTimeMillis();
+    }
+
+    public GameSettings settingsOrDefault() {
+        return settings != null ? settings : GameSettings.defaults();
     }
 
     public User getUserById(String userId) {

@@ -1,40 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getApiErrorCode, getApiErrorMessage, roomService } from "../services/roomService";
 import type { RoomSummary } from "../types/room";
 import Toast from "../components/ui/Toast";
-import Modal from "../components/ui/Modal";
 import PixelIcon from "../components/ui/PixelIcon";
 import PixelAvatar from "../components/ui/PixelAvatar";
 import Mascot from "../components/ui/Mascot";
+import LobbyModal, { type PlayMode } from "../components/lobby/LobbyModal";
+import { useToast } from "../hooks/useToast";
 import { storage } from "../utils/storage";
-
-const preloadVideo = (videoUrl: string) => {
-    if (!videoUrl) return;
-
-    try {
-        let existing = document.getElementById("preload-video") as HTMLVideoElement | null;
-        if (!existing) {
-            existing = document.createElement("video");
-            existing.id = "preload-video";
-            existing.preload = "auto";
-            existing.muted = true;
-            existing.playsInline = true;
-            existing.style.display = "none";
-            document.body.appendChild(existing);
-        }
-
-        existing.pause();
-        existing.removeAttribute("src");
-        existing.load();
-        existing.src = videoUrl;
-        existing.load();
-    } catch (error) {
-        console.warn("Failed to preload first video from lobby:", error);
-    }
-};
-
-type PlayMode = "menu" | "friends" | "public" | null;
+import { preloadVideo } from "../utils/videoPreload";
 
 export default function LobbyPage() {
     const [roomName, setRoomName] = useState(() => storage.getRoomName());
@@ -42,33 +17,16 @@ export default function LobbyPage() {
     const [pendingName, setPendingName] = useState(() => storage.getUserName() || "");
     const [joinId, setJoinId] = useState("");
     const [rooms, setRooms] = useState<RoomSummary[]>([]);
-    const [toast, setToast] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+    const { toast, showToast, clearToast } = useToast();
     const [showNameGate, setShowNameGate] = useState(() => !storage.getUserName());
     const [playMode, setPlayMode] = useState<PlayMode>(null);
     const [submitting, setSubmitting] = useState(false);
     const [refreshTick, setRefreshTick] = useState(0);
     const [refreshing, setRefreshing] = useState(false);
-    const toastTimerRef = useRef<number | null>(null);
     const navigate = useNavigate();
 
-    const showToast = (type: "success" | "error" | "info", text: string) => {
-        if (toastTimerRef.current !== null) {
-            window.clearTimeout(toastTimerRef.current);
-        }
-        setToast({ type, text });
-        toastTimerRef.current = window.setTimeout(() => {
-            setToast(null);
-            toastTimerRef.current = null;
-        }, 3200);
-    };
-
-    useEffect(() => () => {
-        if (toastTimerRef.current !== null) {
-            window.clearTimeout(toastTimerRef.current);
-        }
-    }, []);
-
     useEffect(() => {
+        if (playMode !== "public") return;
         let active = true;
         const fetchRooms = async () => {
             try {
@@ -82,12 +40,14 @@ export default function LobbyPage() {
             }
         };
         fetchRooms();
+        // Poll only while the public-room list is on screen; an idle lobby tab
+        // should not burn the per-IP rate limit.
         const intervalId = setInterval(fetchRooms, 4000);
         return () => {
             active = false;
             clearInterval(intervalId);
         };
-    }, [refreshTick]);
+    }, [playMode, refreshTick]);
 
     const handleRefreshRooms = () => {
         setRefreshing(true);
@@ -155,7 +115,7 @@ export default function LobbyPage() {
                 return;
             }
             if (code === "ROOM_FULL") {
-                showToast("error", "Phòng đã đầy (5/5). Vui lòng chọn phòng khác.");
+                showToast("error", "Phòng đã đầy. Vui lòng chọn phòng khác.");
                 return;
             }
             if (code === "ROOM_PLAYING") {
@@ -192,75 +152,9 @@ export default function LobbyPage() {
 
     const storedName = storage.getUserName();
     const avatarSeed = storage.getUserId() || userName || "meo-sanh";
-    const modalOpen = showNameGate || playMode !== null;
-    const closeModal = showNameGate && !storedName
-        ? undefined
-        : () => {
-            if (showNameGate) {
-                setShowNameGate(false);
-                return;
-            }
-            setPlayMode(null);
-        };
-
-    const modalTitle = showNameGate
-        ? "Nhập tên hiển thị"
-        : playMode === "friends"
-            ? "Chơi với bạn bè"
-            : playMode === "public"
-                ? "Phòng đang hoạt động"
-                : "Chơi với mọi người";
-
-    const modalActions = showNameGate ? (
-        <>
-            {storedName && (
-                <button type="button" className="pbtn" onClick={() => setShowNameGate(false)}>
-                    Hủy
-                </button>
-            )}
-            <button type="button" className="pbtn pbtn--primary" onClick={handleSaveName}>
-                <PixelIcon name="check" size={16} />
-                Lưu tên
-            </button>
-        </>
-    ) : playMode === "friends" ? (
-        <>
-            <button type="button" className="pbtn" onClick={() => setPlayMode("menu")}>
-                <PixelIcon name="arrowLeft" size={16} />
-                Quay lại
-            </button>
-            <button
-                type="button"
-                className="pbtn pbtn--primary"
-                onClick={() => handleJoinRoom(joinId)}
-                disabled={submitting}
-            >
-                <PixelIcon name="door" size={16} />
-                {submitting ? "Đang vào..." : "Tham gia"}
-            </button>
-        </>
-    ) : playMode === "public" ? (
-        <>
-            <button type="button" className="pbtn" onClick={handleRefreshRooms} disabled={refreshing}>
-                <PixelIcon name="refresh" size={16} />
-                {refreshing ? "Đang tải..." : "Làm mới"}
-            </button>
-            <button type="button" className="pbtn" onClick={() => setPlayMode("menu")}>
-                <PixelIcon name="arrowLeft" size={16} />
-                Quay lại
-            </button>
-            <button type="button" className="pbtn pbtn--primary" onClick={() => setPlayMode(null)}>
-                Đóng
-            </button>
-        </>
-    ) : (
-        <button type="button" className="pbtn" onClick={() => setPlayMode(null)}>
-            Đóng
-        </button>
-    );
 
     return (
-        <div className="lobby-page">
+        <main className="lobby-page">
             <div className="lobby-stack">
                 <button
                     type="button"
@@ -275,7 +169,7 @@ export default function LobbyPage() {
                     <Toast
                         message={toast.text}
                         type={toast.type}
-                        onClose={() => setToast(null)}
+                        onClose={clearToast}
                     />
                 )}
 
@@ -376,7 +270,7 @@ export default function LobbyPage() {
 
                             <div className="lobby-scene-note">
                                 <PixelIcon name="sparkles" size={14} />
-                                <span>Phòng tối đa 5 người · hát theo lời · AI chấm điểm</span>
+                                <span>Chơi theo lượt · hát theo lời · AI chấm điểm</span>
                             </div>
                         </div>
 
@@ -391,133 +285,23 @@ export default function LobbyPage() {
                 </section>
             </div>
 
-            {modalOpen && (
-                <Modal
-                    title={modalTitle}
-                    icon={showNameGate ? "edit" : playMode === "friends" ? "users" : playMode === "public" ? "door" : "sparkles"}
-                    onClose={closeModal}
-                    actions={modalActions}
-                >
-                    {showNameGate && (
-                        <>
-                            <p className="p-muted">
-                                Tên này sẽ hiện trên bảng xếp hạng và trong khung chat. Tối đa 24 ký tự.
-                            </p>
-                            <div className="p-field">
-                                <label className="p-label" htmlFor="lobby-display-name">
-                                    <PixelIcon name="heart" size={15} />
-                                    Tên hiển thị
-                                </label>
-                                <input
-                                    id="lobby-display-name"
-                                    className="p-input"
-                                    value={pendingName}
-                                    maxLength={24}
-                                    onChange={(e) => setPendingName(e.target.value)}
-                                    placeholder="Ví dụ: Linh, Nam..."
-                                    autoFocus
-                                />
-                            </div>
-                        </>
-                    )}
-
-                    {!showNameGate && playMode === "menu" && (
-                        <div style={{ display: "grid", gap: 10 }}>
-                            <button type="button" className="lobby-menu-option" onClick={() => setPlayMode("friends")}>
-                                <span className="lobby-menu-icon">
-                                    <PixelIcon name="users" size={22} />
-                                </span>
-                                <span className="lobby-menu-text">
-                                    <strong>Chơi với bạn bè</strong>
-                                    <span>Nhập ID phòng mà bạn bè vừa gửi.</span>
-                                </span>
-                            </button>
-                            <button type="button" className="lobby-menu-option" onClick={() => setPlayMode("public")}>
-                                <span className="lobby-menu-icon">
-                                    <PixelIcon name="door" size={22} />
-                                </span>
-                                <span className="lobby-menu-text">
-                                    <strong>Xem phòng đang mở</strong>
-                                    <span>Chọn một phòng công khai và tham gia ngay.</span>
-                                </span>
-                            </button>
-                        </div>
-                    )}
-
-                    {!showNameGate && playMode === "friends" && (
-                        <>
-                            <p className="p-muted">
-                                Nhờ chủ phòng gửi ID phòng, sau đó dán vào ô bên dưới.
-                            </p>
-                            <div className="p-field">
-                                <label className="p-label" htmlFor="lobby-join-id">
-                                    <PixelIcon name="door" size={15} />
-                                    ID phòng
-                                </label>
-                                <input
-                                    id="lobby-join-id"
-                                    className="p-input"
-                                    value={joinId}
-                                    maxLength={12}
-                                    onChange={(e) => setJoinId(e.target.value)}
-                                    placeholder="Ví dụ: A1B2C3"
-                                    autoFocus
-                                />
-                            </div>
-                        </>
-                    )}
-
-                    {!showNameGate && playMode === "public" && (
-                        <>
-                            <div className="lobby-room-list">
-                                {rooms.length === 0 && (
-                                    <div className="lobby-empty">
-                                        <Mascot size={56} className="lobby-empty-mascot" />
-                                        <p style={{ marginTop: 6 }}>Chưa có phòng nào. Hãy tạo phòng đầu tiên!</p>
-                                    </div>
-                                )}
-                                {rooms.map((room) => {
-                                    const joinable = room.gameState === "LOBBY"
-                                        && room.playerCount < room.maxPlayers;
-                                    const stateLabel = room.gameState !== "LOBBY"
-                                        ? "Đang chơi"
-                                        : room.playerCount >= room.maxPlayers
-                                            ? "Đã đầy"
-                                            : "Có thể vào";
-                                    return (
-                                        <div key={room.roomId} className="lobby-room">
-                                            <div>
-                                                <div className="lobby-room-name">{room.roomName}</div>
-                                                <div className="lobby-room-meta">
-                                                    <span className="p-chip">
-                                                        <PixelIcon name="home" size={12} />
-                                                        {room.roomId}
-                                                    </span>
-                                                    <span className="p-chip p-chip--sage">
-                                                        <PixelIcon name="users" size={12} />
-                                                        {room.playerCount}/{room.maxPlayers}
-                                                    </span>
-                                                    <span className={`p-chip ${joinable ? "p-chip--mustard" : ""}`}>
-                                                        {stateLabel}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <button
-                                                type="button"
-                                                className="pbtn pbtn--sm pbtn--primary"
-                                                onClick={() => handleJoinRoom(room.roomId)}
-                                                disabled={!joinable || submitting}
-                                            >
-                                                {joinable ? "Tham gia" : "Không thể vào"}
-                                            </button>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </>
-                    )}
-                </Modal>
-            )}
-        </div>
+            <LobbyModal
+                showNameGate={showNameGate}
+                hasStoredName={Boolean(storedName)}
+                pendingName={pendingName}
+                onPendingNameChange={setPendingName}
+                onSaveName={handleSaveName}
+                onCloseNameGate={() => setShowNameGate(false)}
+                playMode={playMode}
+                onPlayModeChange={setPlayMode}
+                joinId={joinId}
+                onJoinIdChange={setJoinId}
+                onJoinRoom={handleJoinRoom}
+                rooms={rooms}
+                submitting={submitting}
+                refreshing={refreshing}
+                onRefreshRooms={handleRefreshRooms}
+            />
+        </main>
     );
 }

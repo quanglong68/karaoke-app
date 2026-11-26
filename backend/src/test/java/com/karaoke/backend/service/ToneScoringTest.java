@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ToneScoringTest {
 
-    private final GameService gameService = new GameService(null, null, 3);
+    private final GameService gameService = new GameService(null, null, null);
 
     private List<Double> originalContour() throws Exception {
         List<Song> songs = new ObjectMapper().readValue(
@@ -106,6 +106,14 @@ class ToneScoringTest {
         assertTrue(gameService.lyricsUnavailable("   ", original));
         assertTrue(gameService.lyricsUnavailable(" ", ""));
         assertFalse(gameService.lyricsUnavailable(original, original));
+    }
+
+    @Test
+    void vietnameseDStrokeIsPreservedDuringLyricsScoring() {
+        assertEquals(100.0, gameService.calculateLyricsScore("Đêm đông đi đâu", "dem dong di dau"), 0.01);
+        double distinctWordsScore = gameService.calculateLyricsScore("đêm đông đi đâu", "em ong i au");
+        assertTrue(distinctWordsScore < 80.0,
+                "Distinct words missing 'đ' should not score as identical, got " + distinctWordsScore);
     }
 
     @Test

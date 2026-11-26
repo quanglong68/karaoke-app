@@ -2,6 +2,8 @@ package com.karaoke.backend.service;
 
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -39,11 +41,17 @@ public class PresenceRegistry {
         return sessions.remove(sessionId);
     }
 
-    public void removeUser(String roomId, String userId) {
+    public List<String> removeUserSessions(String roomId, String userId) {
+        List<String> removed = new ArrayList<>();
         sessions.entrySet().removeIf(entry -> {
             PresenceInfo info = entry.getValue();
-            return info.getRoomId().equals(roomId) && info.getUserId().equals(userId);
+            if (info.getRoomId().equals(roomId) && info.getUserId().equals(userId)) {
+                removed.add(entry.getKey());
+                return true;
+            }
+            return false;
         });
+        return removed;
     }
 
     public boolean isUserOnline(String roomId, String userId) {
@@ -54,5 +62,19 @@ public class PresenceRegistry {
     public boolean hasRoomPresence(String roomId) {
         return sessions.values().stream()
                 .anyMatch(info -> info.getRoomId().equals(roomId));
+    }
+
+    public int countUserSessions(String roomId, String userId, String excludedSessionId) {
+        int count = 0;
+        for (Map.Entry<String, PresenceInfo> entry : sessions.entrySet()) {
+            if (entry.getKey().equals(excludedSessionId)) {
+                continue;
+            }
+            PresenceInfo info = entry.getValue();
+            if (info.getRoomId().equals(roomId) && info.getUserId().equals(userId)) {
+                count++;
+            }
+        }
+        return count;
     }
 }

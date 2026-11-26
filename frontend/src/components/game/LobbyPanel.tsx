@@ -1,5 +1,4 @@
 import type { User } from "../../types/user";
-import { MAX_PLAYERS } from "../../constants/game";
 import PixelIcon from "../ui/PixelIcon";
 import PixelAvatar from "../ui/PixelAvatar";
 
@@ -7,16 +6,17 @@ interface LobbyPanelProps {
     playerList: User[];
     isHost: boolean;
     onKick: (userId: string) => void;
+    maxPlayers: number;
 }
 
-export default function LobbyPanel({ playerList, isHost, onKick }: LobbyPanelProps) {
+export default function LobbyPanel({ playerList, isHost, onKick, maxPlayers }: LobbyPanelProps) {
     return (
         <div className="lobby-panel">
             <div className="lobby-panel-head">
                 <h2 className="lobby-panel-title">Sảnh chờ khởi động</h2>
                 <span className="p-chip p-chip--mustard">
                     <PixelIcon name="users" size={13} />
-                    {playerList.length}/{MAX_PLAYERS}
+                    {playerList.length}/{maxPlayers}
                 </span>
             </div>
 
