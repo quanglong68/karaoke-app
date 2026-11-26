@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { User } from "../../types/user";
 import PixelIcon from "../ui/PixelIcon";
 import PixelAvatar from "../ui/PixelAvatar";
@@ -14,7 +15,7 @@ interface LeaderboardProps {
     onPlayerVolumeChange: (userId: string, value: number) => void;
 }
 
-export default function Leaderboard({
+function Leaderboard({
     rankedPlayers,
     userId,
     masterVolume,
@@ -76,3 +77,5 @@ export default function Leaderboard({
         </aside>
     );
 }
+
+export default memo(Leaderboard);

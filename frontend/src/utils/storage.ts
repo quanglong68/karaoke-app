@@ -8,54 +8,80 @@ const REMOTE_VOLUME_KEY = "karaokeRemoteVolume";
 const PLAYER_VOLUMES_KEY = "karaokePlayerVolumes";
 const REMOTE_VOLUME_DEFAULT = 150;
 
+// Private mode / storage quota can make localStorage throw; the app must keep
+// working with in-memory defaults instead of crashing during render.
+const read = (key: string): string | null => {
+    try {
+        return localStorage.getItem(key);
+    } catch {
+        return null;
+    }
+};
+
+const write = (key: string, value: string): void => {
+    try {
+        localStorage.setItem(key, value);
+    } catch {
+        // Best effort only.
+    }
+};
+
+const remove = (key: string): void => {
+    try {
+        localStorage.removeItem(key);
+    } catch {
+        // Best effort only.
+    }
+};
+
 export const storage = {
     getUserName(): string {
-        return localStorage.getItem(USER_NAME_KEY) || "";
+        return read(USER_NAME_KEY) || "";
     },
     setUserName(value: string): void {
-        localStorage.setItem(USER_NAME_KEY, value);
+        write(USER_NAME_KEY, value);
     },
     getUserId(): string {
-        return localStorage.getItem(USER_ID_KEY) || "";
+        return read(USER_ID_KEY) || "";
     },
     setUserId(value: string): void {
-        localStorage.setItem(USER_ID_KEY, value);
+        write(USER_ID_KEY, value);
     },
     getRoomName(): string {
-        return localStorage.getItem(ROOM_NAME_KEY) || "";
+        return read(ROOM_NAME_KEY) || "";
     },
     setRoomName(value: string): void {
-        localStorage.setItem(ROOM_NAME_KEY, value);
+        write(ROOM_NAME_KEY, value);
     },
     getRoomId(): string {
-        return localStorage.getItem(ROOM_ID_KEY) || "";
+        return read(ROOM_ID_KEY) || "";
     },
     setRoomId(value: string): void {
-        localStorage.setItem(ROOM_ID_KEY, value);
+        write(ROOM_ID_KEY, value);
     },
     getSessionToken(): string {
-        return localStorage.getItem(SESSION_TOKEN_KEY) || "";
+        return read(SESSION_TOKEN_KEY) || "";
     },
     setSessionToken(value: string): void {
-        localStorage.setItem(SESSION_TOKEN_KEY, value);
+        write(SESSION_TOKEN_KEY, value);
     },
     clearSessionToken(): void {
-        localStorage.removeItem(SESSION_TOKEN_KEY);
-        localStorage.removeItem(LEGACY_ROOM_JOIN_TOKEN_KEY);
+        remove(SESSION_TOKEN_KEY);
+        remove(LEGACY_ROOM_JOIN_TOKEN_KEY);
     },
     getRemoteVolume(): number {
-        const raw = localStorage.getItem(REMOTE_VOLUME_KEY);
+        const raw = read(REMOTE_VOLUME_KEY);
         if (raw === null) return REMOTE_VOLUME_DEFAULT;
         const value = Number(raw);
         if (!Number.isFinite(value)) return REMOTE_VOLUME_DEFAULT;
         return Math.min(300, Math.max(0, Math.round(value)));
     },
     setRemoteVolume(value: number): void {
-        localStorage.setItem(REMOTE_VOLUME_KEY, String(Math.round(value)));
+        write(REMOTE_VOLUME_KEY, String(Math.round(value)));
     },
     getPlayerVolumes(): Record<string, number> {
         try {
-            const raw = localStorage.getItem(PLAYER_VOLUMES_KEY);
+            const raw = read(PLAYER_VOLUMES_KEY);
             if (!raw) return {};
             const parsed: unknown = JSON.parse(raw);
             if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
@@ -73,6 +99,6 @@ export const storage = {
     },
     setPlayerVolumes(values: Record<string, number>): void {
         const entries = Object.entries(values).slice(-50);
-        localStorage.setItem(PLAYER_VOLUMES_KEY, JSON.stringify(Object.fromEntries(entries)));
+        write(PLAYER_VOLUMES_KEY, JSON.stringify(Object.fromEntries(entries)));
     },
 };

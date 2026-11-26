@@ -1,17 +1,30 @@
+import { memo, useState } from "react";
 import type { SocketMessage } from "../../types/socket";
 import { MAX_CHAT_LENGTH } from "../../constants/game";
 import PixelIcon from "../ui/PixelIcon";
 import Mascot from "../ui/Mascot";
 
+export interface ChatEntry {
+    id: number;
+    message: SocketMessage;
+}
+
 interface ChatPanelProps {
-    messages: SocketMessage[];
-    inputMessage: string;
-    onInputChange: (value: string) => void;
-    onSend: () => void;
+    messages: ChatEntry[];
+    onSend: (content: string) => void;
     userId: string;
 }
 
-export default function ChatPanel({ messages, inputMessage, onInputChange, onSend, userId }: ChatPanelProps) {
+function ChatPanel({ messages, onSend, userId }: ChatPanelProps) {
+    const [inputMessage, setInputMessage] = useState("");
+
+    const handleSend = () => {
+        const trimmed = inputMessage.trim().slice(0, MAX_CHAT_LENGTH);
+        if (!trimmed) return;
+        onSend(trimmed);
+        setInputMessage("");
+    };
+
     return (
         <aside className="p-panel chat-panel" aria-label="Kênh chat phòng">
             <div className="p-panel-head">
@@ -27,11 +40,11 @@ export default function ChatPanel({ messages, inputMessage, onInputChange, onSen
                         Gửi lời chào đầu tiên nhé!
                     </div>
                 )}
-                {messages.map((msg, index) => {
+                {messages.map(({ id, message: msg }) => {
                     const isMeChat = msg.sender === userId;
                     const displayName = msg.senderName || msg.sender;
                     return (
-                        <div key={index} className={`chat-msg${isMeChat ? " is-me" : ""}`}>
+                        <div key={id} className={`chat-msg${isMeChat ? " is-me" : ""}`}>
                             <span className="chat-author">{isMeChat ? "Bạn" : displayName}</span>
                             <div className="chat-bubble">
                                 {typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content)}
@@ -44,10 +57,10 @@ export default function ChatPanel({ messages, inputMessage, onInputChange, onSen
                 <input
                     className="p-input"
                     value={inputMessage}
-                    onChange={(e) => onInputChange(e.target.value)}
+                    onChange={(e) => setInputMessage(e.target.value)}
                     onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                            onSend();
+                            handleSend();
                         }
                     }}
                     maxLength={MAX_CHAT_LENGTH}
@@ -57,7 +70,7 @@ export default function ChatPanel({ messages, inputMessage, onInputChange, onSen
                 <button
                     type="button"
                     className="pbtn pbtn--primary pbtn--icon"
-                    onClick={onSend}
+                    onClick={handleSend}
                     aria-label="Gửi tin nhắn"
                 >
                     <PixelIcon name="send" size={16} />
@@ -66,3 +79,5 @@ export default function ChatPanel({ messages, inputMessage, onInputChange, onSen
         </aside>
     );
 }
+
+export default memo(ChatPanel);

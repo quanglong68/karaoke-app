@@ -10,6 +10,9 @@ interface StageContentProps {
     isHost: boolean;
     onKick: (userId: string) => void;
     perfCountdown: number;
+    performanceSeconds: number;
+    minPerformanceSeconds: number;
+    maxPlayers: number;
     lyrics: string;
     isSinger: boolean;
     singerName?: string | null;
@@ -25,6 +28,9 @@ export default function StageContent({
     isHost,
     onKick,
     perfCountdown,
+    performanceSeconds,
+    minPerformanceSeconds,
+    maxPlayers,
     lyrics,
     isSinger,
     singerName = null,
@@ -34,13 +40,22 @@ export default function StageContent({
     lyricsStatus = "idle",
 }: StageContentProps) {
     if (gameState === "LOBBY") {
-        return <LobbyPanel playerList={playerList} isHost={isHost} onKick={onKick} />;
+        return (
+            <LobbyPanel
+                playerList={playerList}
+                isHost={isHost}
+                onKick={onKick}
+                maxPlayers={maxPlayers}
+            />
+        );
     }
 
     if (gameState === "PERFORMANCE") {
         return (
             <PerformancePanel
                 perfCountdown={perfCountdown}
+                totalSeconds={performanceSeconds}
+                minSeconds={minPerformanceSeconds}
                 lyrics={lyrics}
                 isSinger={isSinger}
                 singerName={singerName}

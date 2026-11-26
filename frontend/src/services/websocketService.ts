@@ -5,6 +5,7 @@ import { WS_ENDPOINT } from "../constants/api";
 
 interface StompFrame {
     body: string;
+    headers?: Record<string, string>;
 }
 
 export interface WebsocketCallbacks {
@@ -26,6 +27,7 @@ const MAX_RECONNECT_DELAY = 30000;
 
 let stompClient: Stomp.Client | null = null;
 let subscription: Stomp.Subscription | null = null;
+let rtcSubscription: Stomp.Subscription | null = null;
 let reconnectTimer: number | null = null;
 let reconnectDelay = INITIAL_RECONNECT_DELAY;
 let manualClose = false;
@@ -76,22 +78,42 @@ const sendNow = (roomId: string, message: SocketMessage) => {
     return true;
 };
 
+const handleFrame = (payload: StompFrame) => {
+    try {
+        const parsed = JSON.parse(payload.body) as SocketMessage;
+        if (parsed && typeof parsed.type === "string") {
+            callbacks?.onMessage(parsed);
+        }
+    } catch (error) {
+        console.error("Invalid WebSocket payload", error);
+    }
+};
+
 const handleConnectionLost = (reason: string) => {
     subscription = null;
+    rtcSubscription = null;
     callbacks?.onDisconnected?.();
     if (manualClose) {
         return;
     }
+    // Only auth rejections are terminal. FORBIDDEN_DESTINATION (a protocol
+    // violation) must not tear the socket down for the rest of the session.
     if (reason.includes("SESSION_INVALID")) {
-        if (callbacks?.onSessionInvalid) {
-            callbacks.onSessionInvalid();
+        // Auth rejections are terminal: reconnecting with the same revoked token
+        // loops forever. Tear everything down and let the screen explain why.
+        const handlers = callbacks;
+        websocketService.disconnect();
+        if (handlers?.onSessionInvalid) {
+            handlers.onSessionInvalid();
         } else {
-            callbacks?.onError?.("Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
+            handlers?.onError?.("Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
         }
         return;
     }
-    if (reason.includes("FORBIDDEN")) {
-        callbacks?.onError?.("Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
+    if (reason.includes("TOO_MANY_CONNECTIONS")) {
+        const handlers = callbacks;
+        websocketService.disconnect();
+        handlers?.onError?.("Bạn đang mở quá nhiều tab trong cùng phòng. Vui lòng đóng bớt tab khác.");
         return;
     }
     scheduleReconnect();
@@ -113,16 +135,10 @@ const openConnection = () => {
                 return;
             }
             reconnectDelay = INITIAL_RECONNECT_DELAY;
-            subscription = client.subscribe(`/topic/room/${currentRoomId}`, (payload: StompFrame) => {
-                try {
-                    const parsed = JSON.parse(payload.body) as SocketMessage;
-                    if (parsed && typeof parsed.type === "string") {
-                        callbacks?.onMessage(parsed);
-                    }
-                } catch (error) {
-                    console.error("Invalid WebSocket payload", error);
-                }
-            });
+            subscription = client.subscribe(`/topic/room/${currentRoomId}`, handleFrame);
+            // WebRTC signalling is addressed to one member, so it arrives on a
+            // per-user queue instead of the room-wide topic.
+            rtcSubscription = client.subscribe("/user/queue/rtc", handleFrame);
             callbacks?.onConnected?.();
             flushQueue();
         },
@@ -130,7 +146,11 @@ const openConnection = () => {
             if (stompClient !== client) {
                 return;
             }
-            const reason = typeof error === "string" ? error : error?.body ?? "WebSocket error";
+            // Spring puts the STOMP ERROR reason in the "message" header; the body
+            // is usually empty, so reading body alone never detected SESSION_INVALID.
+            const reason = typeof error === "string"
+                ? error
+                : error?.headers?.message || error?.body || "WebSocket error";
             console.error("WebSocket error:", reason);
             handleConnectionLost(reason);
         },
@@ -168,14 +188,23 @@ export const websocketService = {
         currentRoomId = "";
         currentToken = "";
         const sub = subscription;
+        const rtcSub = rtcSubscription;
         const client = stompClient;
         subscription = null;
+        rtcSubscription = null;
         stompClient = null;
         if (sub) {
             try {
                 sub.unsubscribe();
             } catch (error) {
                 console.debug("WebSocket unsubscribe error", error);
+            }
+        }
+        if (rtcSub) {
+            try {
+                rtcSub.unsubscribe();
+            } catch (error) {
+                console.debug("WebSocket RTC unsubscribe error", error);
             }
         }
         if (client) {

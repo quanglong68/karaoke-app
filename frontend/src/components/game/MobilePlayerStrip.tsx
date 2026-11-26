@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { RankedUser } from "./Leaderboard";
 import PixelAvatar from "../ui/PixelAvatar";
 import PixelIcon from "../ui/PixelIcon";
@@ -7,7 +8,7 @@ interface MobilePlayerStripProps {
     userId: string;
 }
 
-export default function MobilePlayerStrip({ rankedPlayers, userId }: MobilePlayerStripProps) {
+function MobilePlayerStrip({ rankedPlayers, userId }: MobilePlayerStripProps) {
     return (
         <div className="mobile-players" aria-label="Người chơi trong phòng">
             {rankedPlayers.map((user) => (
@@ -29,3 +30,5 @@ export default function MobilePlayerStrip({ rankedPlayers, userId }: MobilePlaye
         </div>
     );
 }
+
+export default memo(MobilePlayerStrip);

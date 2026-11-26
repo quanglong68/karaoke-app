@@ -1,38 +1,20 @@
 import axios from "axios";
 import type { JoinRoomResponse, RoomSummary } from "../types/room";
 import { API_BASE_URL } from "../constants/api";
-
-interface ApiErrorBody {
-    code?: string;
-    message?: string;
-}
+export { getApiErrorCode, getApiErrorMessage } from "./apiError";
 
 const API = axios.create({
     baseURL: API_BASE_URL,
     timeout: 15000,
 });
 
-export const getApiErrorCode = (error: unknown): string => {
-    if (axios.isAxiosError<ApiErrorBody>(error)) {
-        return error.response?.data?.code ?? "";
-    }
-    return "";
-};
-
-export const getApiErrorMessage = (error: unknown, fallback: string): string => {
-    if (axios.isAxiosError<ApiErrorBody>(error)) {
-        return error.response?.data?.message || fallback;
-    }
-    return fallback;
-};
-
 export const roomService = {
     createRoom: async (roomName: string, userName: string): Promise<JoinRoomResponse> => {
-        const response = await API.post("/api/rooms/create", null, { params: { roomName, userName } });
+        const response = await API.post("/api/rooms/create", { roomName, userName });
         return response.data;
     },
     joinRoom: async (roomId: string, userName: string): Promise<JoinRoomResponse> => {
-        const response = await API.post("/api/rooms/join", null, { params: { roomId, userName } });
+        const response = await API.post("/api/rooms/join", { roomId, userName });
         return response.data;
     },
     rejoin: async (sessionToken: string): Promise<JoinRoomResponse> => {
@@ -48,7 +30,6 @@ export const roomService = {
     leaveRoom: async (sessionToken: string): Promise<void> => {
         await API.post("/api/rooms/leave", null, {
             headers: { "X-Session-Token": sessionToken },
-            params: { sessionToken },
         });
     },
 };

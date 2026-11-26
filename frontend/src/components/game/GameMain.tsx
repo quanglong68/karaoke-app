@@ -26,7 +26,7 @@ export default function GameMain({
     unreadChat,
 }: GameMainProps) {
     return (
-        <div className={`game-main-wrap mobile-tab-${mobileTab}`}>
+        <main className={`game-main-wrap mobile-tab-${mobileTab}`}>
             <MainLayout
                 left={left}
                 center={
@@ -74,6 +74,6 @@ export default function GameMain({
                     <span>Chat</span>
                 </button>
             </nav>
-        </div>
+        </main>
     );
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import PixelIcon from "../ui/PixelIcon";
 import PixelAvatar from "../ui/PixelAvatar";
 import Mascot from "../ui/Mascot";
@@ -25,7 +25,7 @@ interface GameHeaderProps {
     onRename: () => void;
 }
 
-export default function GameHeader({
+function GameHeader({
     myScore,
     roomId,
     userName,
@@ -61,7 +61,7 @@ export default function GameHeader({
         <header className="game-header">
             <div className="game-brand">
                 <Mascot size={30} headOnly pokeable={false} />
-                <span>Karaoke Battle</span>
+                <h1 className="game-brand-title">Karaoke Battle</h1>
             </div>
 
             <div className="game-header-compact">
@@ -176,3 +176,5 @@ export default function GameHeader({
         </header>
     );
 }
+
+export default memo(GameHeader);

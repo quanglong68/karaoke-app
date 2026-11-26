@@ -1,9 +1,10 @@
-import { PERFORMANCE_SECONDS } from "../../constants/game";
 import type { LyricsStatus } from "../../types/game";
 import PixelIcon from "../ui/PixelIcon";
 
 interface PerformancePanelProps {
     perfCountdown: number;
+    totalSeconds: number;
+    minSeconds: number;
     lyrics: string;
     isSinger: boolean;
     singerName: string | null;
@@ -13,13 +14,17 @@ interface PerformancePanelProps {
 
 export default function PerformancePanel({
     perfCountdown,
+    totalSeconds,
+    minSeconds,
     lyrics,
     isSinger,
     singerName,
     onFinish,
     lyricsStatus = "idle",
 }: PerformancePanelProps) {
-    const progress = Math.max(0, Math.min(100, (perfCountdown / PERFORMANCE_SECONDS) * 100));
+    const progress = Math.max(0, Math.min(100, (perfCountdown / totalSeconds) * 100));
+    const secondsUntilFinish = Math.max(0, perfCountdown - (totalSeconds - minSeconds));
+    const canFinish = secondsUntilFinish === 0;
 
     return (
         <div className="perf-panel">
@@ -43,7 +48,7 @@ export default function PerformancePanel({
                 className="perf-bar"
                 role="progressbar"
                 aria-valuemin={0}
-                aria-valuemax={PERFORMANCE_SECONDS}
+                aria-valuemax={totalSeconds}
                 aria-valuenow={perfCountdown}
                 aria-label="Thời gian biểu diễn còn lại"
             >
@@ -57,10 +62,20 @@ export default function PerformancePanel({
             <div className="perf-actions">
                 {isSinger ? (
                     <>
-                        <button type="button" className="pbtn pbtn--primary" onClick={onFinish}>
+                        <button
+                            type="button"
+                            className="pbtn pbtn--primary"
+                            onClick={onFinish}
+                            disabled={!canFinish}
+                        >
                             <PixelIcon name="check" size={18} />
                             Hát xong rồi!
                         </button>
+                        {!canFinish && (
+                            <p className="p-muted p-tiny perf-recognition">
+                                Có thể kết thúc sau {secondsUntilFinish}s
+                            </p>
+                        )}
                         {lyricsStatus === "listening" && (
                             <p className="p-muted p-tiny perf-recognition">Đang nhận diện lời bài hát...</p>
                         )}
