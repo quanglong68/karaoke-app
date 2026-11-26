@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import PixelIcon from "../ui/PixelIcon";
 import AdminSongEditModal, { type SongEditState } from "./AdminSongEditModal";
+import AdminSingTestModal, { type SingTestTarget } from "./AdminSingTestModal";
 import AdminSongRow from "./AdminSongRow";
 import {
     adminService,
@@ -37,6 +38,7 @@ const AdminSongLibrary: React.FC<AdminSongLibraryProps> = ({ onUnauthorized }) =
     const [loadingEdit, setLoadingEdit] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
     const [editError, setEditError] = useState("");
+    const [singTestTarget, setSingTestTarget] = useState<SingTestTarget | null>(null);
     const editorRequestRef = useRef(0);
 
     useEffect(() => {
@@ -121,6 +123,31 @@ const AdminSongLibrary: React.FC<AdminSongLibraryProps> = ({ onUnauthorized }) =
                 return;
             }
             setError(getAdminErrorMessage(restoreError, "Không thể khôi phục bài hát."));
+        } finally {
+            setBusyId(null);
+        }
+    };
+
+    const openSingTest = async (song: AdminSongSummary) => {
+        setBusyId(song.id);
+        setError("");
+        try {
+            const detail = await adminService.getSong(song.id);
+            setSingTestTarget({
+                mode: "song",
+                id: detail.id,
+                songName: detail.songName,
+                videoUrl: detail.videoUrl,
+                vocalUrl: detail.vocalUrl,
+                listenDuration: detail.listenDuration,
+                lyrics: detail.lyrics,
+            });
+        } catch (loadErr) {
+            if (isUnauthorized(loadErr)) {
+                onUnauthorized();
+                return;
+            }
+            setError(getAdminErrorMessage(loadErr, "Không tải được dữ liệu bài hát để hát thử."));
         } finally {
             setBusyId(null);
         }
@@ -271,6 +298,7 @@ const AdminSongLibrary: React.FC<AdminSongLibraryProps> = ({ onUnauthorized }) =
                                 song={song}
                                 busy={busyId === song.id}
                                 confirmingArchive={confirmArchiveId === song.id}
+                                onTest={openSingTest}
                                 onEdit={openEditor}
                                 onRequestArchive={setConfirmArchiveId}
                                 onCancelArchive={() => setConfirmArchiveId(null)}
@@ -323,6 +351,14 @@ const AdminSongLibrary: React.FC<AdminSongLibraryProps> = ({ onUnauthorized }) =
                     onChange={setEditing}
                     onClose={closeEditor}
                     onSubmit={saveEditor}
+                />
+            )}
+
+            {singTestTarget && (
+                <AdminSingTestModal
+                    target={singTestTarget}
+                    onClose={() => setSingTestTarget(null)}
+                    onUnauthorized={onUnauthorized}
                 />
             )}
         </>

@@ -137,7 +137,127 @@ public class PerformanceScorer {
             return 0;
         }
         int distance = LevenshteinDistance.getDefaultInstance().apply(cleanUserLyrics, cleanOriginalLyrics);
-        return (1.0 - ((double) distance / maxLength)) * 100;
+        double charScore = (1.0 - ((double) distance / maxLength)) * 100.0;
+
+        String[] userWords = cleanUserLyrics.isEmpty() ? new String[0] : cleanUserLyrics.split(" ");
+        String[] origWords = cleanOriginalLyrics.isEmpty() ? new String[0] : cleanOriginalLyrics.split(" ");
+        if (userWords.length == 0 || origWords.length == 0) {
+            return Math.max(0.0, charScore);
+        }
+        double syllableScore = calculatePhoneticSyllableScore(userWords, origWords);
+        return Math.min(100.0, Math.max(charScore, (charScore * 0.35) + (syllableScore * 0.65)));
+    }
+
+    private double calculatePhoneticSyllableScore(String[] userWords, String[] origWords) {
+        int n = Math.min(userWords.length, 400);
+        int m = Math.min(origWords.length, 400);
+        int maxWords = Math.max(n, m);
+        if (maxWords == 0) {
+            return 0.0;
+        }
+
+        double[] prev = new double[m + 1];
+        double[] curr = new double[m + 1];
+        for (int j = 0; j <= m; j++) {
+            prev[j] = j * 0.85;
+        }
+        for (int i = 1; i <= n; i++) {
+            curr[0] = i * 0.85;
+            String uw = userWords[i - 1];
+            for (int j = 1; j <= m; j++) {
+                double subCost = syllableDistance(uw, origWords[j - 1]);
+                double match = prev[j - 1] + subCost;
+                double delete = prev[j] + 0.85;
+                double insert = curr[j - 1] + 0.85;
+                curr[j] = Math.min(match, Math.min(delete, insert));
+            }
+            double[] tmp = prev;
+            prev = curr;
+            curr = tmp;
+        }
+        double rawScore = (1.0 - (prev[m] / maxWords)) * 100.0;
+        return Math.max(0.0, Math.min(100.0, rawScore));
+    }
+
+    private double syllableDistance(String a, String b) {
+        if (a.equals(b)) {
+            return 0.0;
+        }
+        String onsetA = extractOnsetGroup(a);
+        String onsetB = extractOnsetGroup(b);
+        String rhymeA = stripOnset(a);
+        String rhymeB = stripOnset(b);
+
+        boolean sameOnsetGroup = onsetA.equals(onsetB);
+        if (sameOnsetGroup && normalizeRhyme(rhymeA).equals(normalizeRhyme(rhymeB))) {
+            // Common sung sibilant/coda/vowel-glide near-miss (e.g. xuong~suong, tuoi~toi, tan~toan)
+            return 0.15;
+        }
+
+        int maxChars = Math.max(a.length(), b.length());
+        int edit = LevenshteinDistance.getDefaultInstance().apply(a, b);
+        double ratio = (double) edit / Math.max(1, maxChars);
+
+        // Preserve distinctness when an initial consonant is dropped altogether (e.g. "dem" vs "em")
+        if (onsetA.isEmpty() != onsetB.isEmpty()) {
+            return Math.min(1.0, ratio + 0.25);
+        }
+        if (sameOnsetGroup && ratio <= 0.5) {
+            return ratio * 0.55;
+        }
+        return ratio;
+    }
+
+    private static String extractOnsetGroup(String word) {
+        if (word.startsWith("ngh") || word.startsWith("ng")) return "ng";
+        if (word.startsWith("gh") || word.startsWith("g")) return "g";
+        if (word.startsWith("kh") || word.startsWith("c") || word.startsWith("k") || word.startsWith("q")) return "k";
+        if (word.startsWith("ch") || word.startsWith("tr")) return "ch";
+        if (word.startsWith("th")) return "th";
+        if (word.startsWith("ph")) return "ph";
+        if (word.startsWith("nh")) return "nh";
+        if (word.startsWith("gi") || word.startsWith("r") || word.startsWith("z")) return "z";
+        if (word.startsWith("x") || word.startsWith("s")) return "s";
+        if (word.startsWith("v")) return "v";
+        if (word.startsWith("d")) return "d";
+        if (word.startsWith("b")) return "b";
+        if (word.startsWith("m")) return "m";
+        if (word.startsWith("n")) return "n";
+        if (word.startsWith("l")) return "l";
+        if (word.startsWith("t")) return "t";
+        if (word.startsWith("h")) return "h";
+        if (word.startsWith("p")) return "p";
+        return "";
+    }
+
+    private static String stripOnset(String word) {
+        for (String prefix : new String[] { "ngh", "ch", "tr", "th", "ph", "nh", "ng", "kh", "gh", "gi", "qu" }) {
+            if (word.startsWith(prefix) && word.length() > prefix.length()) {
+                return word.substring(prefix.length());
+            }
+        }
+        if (!word.isEmpty() && "bcdghklmnpqrstvxz".indexOf(word.charAt(0)) >= 0) {
+            return word.substring(1);
+        }
+        return word;
+    }
+
+    private static String normalizeRhyme(String rhyme) {
+        String r = rhyme;
+        // Common vowel glides when sustaining notes in Vietnamese singing
+        r = r.replace("uoi", "oi").replace("uoc", "oc").replace("uon", "on")
+                .replace("oat", "at").replace("oan", "an")
+                .replace("ieng", "eng").replace("iec", "ec").replace("ien", "en");
+        if (r.endsWith("ng")) {
+            r = r.substring(0, r.length() - 2) + "n";
+        } else if (r.endsWith("nh")) {
+            r = r.substring(0, r.length() - 2) + "n";
+        } else if (r.endsWith("ch")) {
+            r = r.substring(0, r.length() - 2) + "t";
+        } else if (r.endsWith("c") || r.endsWith("p")) {
+            r = r.substring(0, r.length() - 1) + "t";
+        }
+        return r;
     }
 
     private double[] analyzePitch(List<Double> pitches) {

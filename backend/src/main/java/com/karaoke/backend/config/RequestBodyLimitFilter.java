@@ -27,6 +27,9 @@ public class RequestBodyLimitFilter extends OncePerRequestFilter {
 
     static final long MAX_API_BODY_BYTES = 256L * 1024L;
     private static final String UPLOAD_PATH = "/api/admin/upload-song";
+    private static final String DRAFT_UPLOAD_PATH = "/api/admin/song-drafts/upload-source";
+    private static final java.util.regex.Pattern DRAFT_ANALYZE_PATH_PATTERN =
+            java.util.regex.Pattern.compile("^/api/admin/song-drafts/[0-9a-fA-F-]{36}/analyze$");
     private static final String PAYLOAD_TOO_LARGE_BODY =
             "{\"code\":\"PAYLOAD_TOO_LARGE\",\"message\":\"Yêu cầu vượt quá kích thước cho phép.\"}";
 
@@ -43,10 +46,13 @@ public class RequestBodyLimitFilter extends OncePerRequestFilter {
             return true;
         }
         String contentType = request.getContentType();
-        if (!(HttpMethod.POST.matches(request.getMethod())
-                && UPLOAD_PATH.equals(path)
+        boolean isMultipartAdminUpload = HttpMethod.POST.matches(request.getMethod())
+                && (UPLOAD_PATH.equals(path)
+                        || DRAFT_UPLOAD_PATH.equals(path)
+                        || DRAFT_ANALYZE_PATH_PATTERN.matcher(path).matches())
                 && contentType != null
-                && contentType.toLowerCase(Locale.ROOT).startsWith("multipart/form-data"))) {
+                && contentType.toLowerCase(Locale.ROOT).startsWith("multipart/form-data");
+        if (!isMultipartAdminUpload) {
             return false;
         }
         // Only lift the 256 KB body cap for requests carrying a structurally valid
@@ -54,7 +60,8 @@ public class RequestBodyLimitFilter extends OncePerRequestFilter {
         // 420 MB payloads past this filter.
         String sessionCookie = SecurityFilterSupport.readAdminSessionCookie(request);
         return AdminAuthService.isValidTokenShape(sessionCookie)
-                && AdminCsrfHeaderFilter.REQUIRED_VALUE.equals(request.getHeader(AdminCsrfHeaderFilter.REQUIRED_HEADER));
+                && AdminCsrfHeaderFilter.REQUIRED_VALUE
+                        .equals(request.getHeader(AdminCsrfHeaderFilter.REQUIRED_HEADER));
     }
 
     @Override

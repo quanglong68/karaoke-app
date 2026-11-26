@@ -24,6 +24,7 @@ interface AdminSongRowProps {
     song: AdminSongSummary;
     busy: boolean;
     confirmingArchive: boolean;
+    onTest: (song: AdminSongSummary) => void;
     onEdit: (song: AdminSongSummary) => void;
     onRequestArchive: (songId: string) => void;
     onCancelArchive: () => void;
@@ -35,6 +36,7 @@ const AdminSongRow: React.FC<AdminSongRowProps> = ({
     song,
     busy,
     confirmingArchive,
+    onTest,
     onEdit,
     onRequestArchive,
     onCancelArchive,
@@ -76,6 +78,15 @@ const AdminSongRow: React.FC<AdminSongRowProps> = ({
                 </div>
             ) : (
                 <div className="admin-row-actions">
+                    <button
+                        type="button"
+                        className="pbtn pbtn--primary pbtn--sm"
+                        onClick={() => onTest(song)}
+                        disabled={busy}
+                    >
+                        <PixelIcon name="mic" size={13} />
+                        Hát thử
+                    </button>
                     <button
                         type="button"
                         className="pbtn pbtn--accent pbtn--sm"

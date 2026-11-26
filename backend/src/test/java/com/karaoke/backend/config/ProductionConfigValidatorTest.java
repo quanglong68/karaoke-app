@@ -85,4 +85,17 @@ class ProductionConfigValidatorTest {
         assertThrows(IllegalStateException.class,
                 () -> validator("https://karaoke.example.com", true, "a".repeat(73), "real-db-password"));
     }
+
+    @Test
+    void rejectsWeakOrDevPlaceholderAiCryptoKeyWhenProvided() {
+        assertThrows(IllegalStateException.class, () -> new ProductionConfigValidator(
+                "https://karaoke.example.com", true, "", "real-db-password",
+                "demo-cloud", "api-key", "api-secret", "karaoke-dev-local-ai-crypto-key-change-in-prod"));
+        assertThrows(IllegalStateException.class, () -> new ProductionConfigValidator(
+                "https://karaoke.example.com", true, "", "real-db-password",
+                "demo-cloud", "api-key", "api-secret", "too-short"));
+        assertDoesNotThrow(() -> new ProductionConfigValidator(
+                "https://karaoke.example.com", true, "", "real-db-password",
+                "demo-cloud", "api-key", "api-secret", "a-strong-random-32-char-secret-key!"));
+    }
 }

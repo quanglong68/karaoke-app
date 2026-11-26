@@ -117,6 +117,16 @@ class ToneScoringTest {
     }
 
     @Test
+    void phoneticSyllableScorerHandlesSungVowelGlidesWhileRejectingWrongLyrics() {
+        String ref = "Thế gian kia tàn nhẫn coi em là xương rồng tưới mát chiếc cây khô cằn";
+        String sungNearMiss = "thế gian kia toàn nhẵn coi em là sướng rồng tới mắt chiếc cây khô cằn";
+        String gibberish = "hát linh tinh sai hết sạch lời bài hát rồi nha";
+
+        assertTrue(gameService.calculateLyricsScore(sungNearMiss, ref) >= 85.0);
+        assertTrue(gameService.calculateLyricsScore(gibberish, ref) < 35.0);
+    }
+
+    @Test
     void wrongMelodyScoresLow() throws Exception {
         Random random = new Random(11);
         List<Double> noise = new ArrayList<>();

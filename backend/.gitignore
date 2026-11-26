@@ -31,3 +31,10 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Local AI models & Python cache ###
+models/
+__pycache__/
+*.py[cod]
+.venv/
+

@@ -33,9 +33,13 @@ class PostgresMigrationTest {
     @Autowired
     private AdminRepository adminRepository;
 
+    @Autowired
+    private AiModelRepository aiModelRepository;
+
     @Test
     void flywaySchemaMatchesEntities() {
         assertEquals(0L, songRepository.countByStatus(SongStatus.ACTIVE));
         assertEquals(0L, adminRepository.count());
+        org.junit.jupiter.api.Assertions.assertTrue(aiModelRepository.count() >= 5L);
     }
 }

@@ -50,6 +50,10 @@ public class AppException extends RuntimeException {
         return new AppException(HttpStatus.PAYLOAD_TOO_LARGE, code);
     }
 
+    public static AppException unprocessable(String code) {
+        return new AppException(HttpStatus.UNPROCESSABLE_ENTITY, code);
+    }
+
     public static AppException tooManyRequests(String code) {
         return new AppException(HttpStatus.TOO_MANY_REQUESTS, code);
     }

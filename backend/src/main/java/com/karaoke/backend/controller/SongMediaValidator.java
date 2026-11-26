@@ -12,9 +12,9 @@ import java.util.Set;
 /**
  * Validates song upload payloads (sizes, extensions, media magic bytes, and metadata bounds).
  */
-final class SongMediaValidator {
+public final class SongMediaValidator {
 
-    private static final long MAX_FILE_BYTES = 200L * 1024 * 1024;
+    public static final long MAX_FILE_BYTES = 200L * 1024 * 1024;
     private static final long MAX_TOTAL_BYTES = 400L * 1024 * 1024;
     private static final double MAX_DURATION_SECONDS = 3600.0;
     private static final int SIGNATURE_PROBE_BYTES = 12;
@@ -22,10 +22,34 @@ final class SongMediaValidator {
 
     // Browsers cannot play Matroska natively, so accepting .mkv produced songs
     // that uploaded fine and then failed to play in the room.
-    static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".webm", ".mov", ".m4v");
-    static final Set<String> AUDIO_EXTENSIONS = Set.of(".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac");
+    public static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".webm", ".mov", ".m4v");
+    public static final Set<String> AUDIO_EXTENSIONS = Set.of(".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac");
 
     private SongMediaValidator() {
+    }
+
+    public static String validateSingleVideo(MultipartFile video) {
+        if (video == null || video.isEmpty()) {
+            throw AppException.badRequest("INVALID_UPLOAD");
+        }
+        if (video.getSize() > MAX_FILE_BYTES) {
+            throw AppException.payloadTooLarge("FILE_TOO_LARGE");
+        }
+        String ext = requireAllowedExtension(video.getOriginalFilename(), VIDEO_EXTENSIONS);
+        validateMediaSignature(video, true);
+        return ext;
+    }
+
+    public static String validateSingleAudio(MultipartFile audio) {
+        if (audio == null || audio.isEmpty()) {
+            throw AppException.badRequest("INVALID_UPLOAD");
+        }
+        if (audio.getSize() > MAX_FILE_BYTES) {
+            throw AppException.payloadTooLarge("FILE_TOO_LARGE");
+        }
+        String ext = requireAllowedExtension(audio.getOriginalFilename(), AUDIO_EXTENSIONS);
+        validateMediaSignature(audio, false);
+        return ext;
     }
 
     static void validateUpload(MultipartFile mainVideo, MultipartFile vocalFile, String title,
